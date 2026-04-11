@@ -1,0 +1,38 @@
+name: Deploy to connect.digitalp.com.au
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Copy plugin files to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 149.28.165.62
+          username: root
+          key: ${{ secrets.VULTR_SSH_KEY }}
+          source: "."
+          target: "/var/www/connect.digitalp.com.au/wp-content/plugins/wk-event-leads"
+          strip_components: 1
+          rm: false
+
+      - name: Fix permissions
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 149.28.165.62
+          username: root
+          key: ${{ secrets.VULTR_SSH_KEY }}
+          script: |
+            set -e
+            PLUGIN="/var/www/connect.digitalp.com.au/wp-content/plugins/wk-event-leads"
+            chown -R www-data:www-data "$PLUGIN"
+            find "$PLUGIN" -type f -exec chmod 644 {} \;
+            find "$PLUGIN" -type d -exec chmod 755 {} \;
+            echo "Deployed wk-event-leads at $(date)"
