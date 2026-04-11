@@ -32,7 +32,8 @@
 
         try {
             const response = await fetch(config.restUrl, {
-                method:  'POST',
+                method:      'POST',
+                credentials: 'same-origin',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-WP-Nonce':   config.nonce,
