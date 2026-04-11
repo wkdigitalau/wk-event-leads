@@ -1,0 +1,303 @@
+/* WK Event Leads — kanban.css
+   Scoped to .wkel-admin to avoid wp-admin conflicts.
+*/
+
+.wkel-admin {
+    font-family: inherit;
+}
+
+/* Controls bar */
+.wkel-kanban-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+}
+
+/* Kanban board */
+.wkel-kanban-board {
+    display: flex;
+    gap: 16px;
+    overflow-x: auto;
+    padding-bottom: 16px;
+    align-items: flex-start;
+    min-height: 400px;
+}
+
+/* Column */
+.wkel-kanban-column {
+    flex: 0 0 260px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+}
+
+.wkel-column-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px 10px;
+    border-top: 4px solid #6B7280;
+    border-radius: 6px 6px 0 0;
+    background: #fff;
+}
+
+.wkel-column-label {
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.wkel-column-count {
+    background: #e5e7eb;
+    color: #374151;
+    border-radius: 9999px;
+    padding: 1px 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+/* Cards container */
+.wkel-column-cards {
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-height: 60px;
+}
+
+/* Card */
+.wkel-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 5px;
+    padding: 12px 14px;
+    cursor: pointer;
+    transition: box-shadow 0.15s, transform 0.15s;
+    user-select: none;
+}
+
+.wkel-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.wkel-card.sortable-ghost {
+    opacity: 0.4;
+    background: #f3f4f6;
+}
+
+.wkel-card.sortable-drag {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    transform: rotate(1.5deg);
+}
+
+.wkel-card-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 2px;
+}
+
+.wkel-card-org {
+    color: #6b7280;
+    font-size: 0.82rem;
+    margin-bottom: 6px;
+}
+
+.wkel-card-extra {
+    font-size: 0.8rem;
+    color: #374151;
+    margin-bottom: 2px;
+}
+
+.wkel-card-extra-label {
+    color: #9ca3af;
+    margin-right: 4px;
+}
+
+.wkel-card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.wkel-card-date {
+    font-size: 0.75rem;
+    color: #9ca3af;
+}
+
+/* Email status dot */
+.wkel-email-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.wkel-email-queued  { background: #9ca3af; }
+.wkel-email-sent    { background: #10b981; }
+.wkel-email-failed  { background: #ef4444; }
+
+/* Detail panel */
+.wkel-detail-panel {
+    position: fixed;
+    top: 32px; /* below wp-admin bar */
+    right: 0;
+    bottom: 0;
+    width: 460px;
+    max-width: 100vw;
+    z-index: 9999;
+    display: flex;
+    flex-direction: row-reverse;
+}
+
+.wkel-detail-inner {
+    background: #fff;
+    width: 460px;
+    max-width: 100vw;
+    height: 100%;
+    overflow-y: auto;
+    padding: 24px;
+    position: relative;
+    box-shadow: -4px 0 24px rgba(0,0,0,0.12);
+    z-index: 1;
+}
+
+.wkel-detail-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 0;
+}
+
+.wkel-detail-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #6b7280;
+    line-height: 1;
+    padding: 4px;
+}
+
+/* Lead detail fields */
+.wkel-detail-field {
+    margin-bottom: 14px;
+}
+
+.wkel-detail-field label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.wkel-detail-field input,
+.wkel-detail-field textarea,
+.wkel-detail-field select {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.wkel-detail-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #f9fafb;
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 16px;
+    font-size: 0.85rem;
+}
+
+.wkel-detail-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid #e5e7eb;
+}
+
+/* Activity log */
+.wkel-activity-log {
+    margin-top: 20px;
+}
+
+.wkel-activity-entry {
+    display: flex;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: #6b7280;
+    padding: 4px 0;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.wkel-activity-time {
+    flex-shrink: 0;
+    color: #9ca3af;
+}
+
+/* Modals */
+.wkel-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.wkel-modal {
+    background: #fff;
+    border-radius: 6px;
+    padding: 24px;
+    min-width: 420px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    position: relative;
+}
+
+.wkel-modal-wide {
+    min-width: 540px;
+}
+
+.wkel-modal h2 {
+    margin-top: 0;
+}
+
+.wkel-modal-footer {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+}
+
+/* Badge */
+.wkel-badge {
+    display: inline-block;
+    background: #e5e7eb;
+    color: #374151;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+
+/* Admin general */
+.wkel-settings-form .form-table th {
+    width: 200px;
+}

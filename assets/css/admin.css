@@ -1,0 +1,22 @@
+/* WK Event Leads — admin.css
+   Scoped to .wkel-admin — no wp-admin style overrides.
+*/
+
+.wkel-admin .wkel-fields-table .wkel-locked {
+    opacity: 0.85;
+}
+
+.wkel-admin .wkel-fields-table td,
+.wkel-admin .wkel-fields-table th {
+    vertical-align: middle;
+}
+
+/* Stage color swatch inline */
+.wkel-stage-color-swatch {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    vertical-align: middle;
+    margin-right: 6px;
+}
