@@ -36,7 +36,7 @@ class WKEL_Admin {
     }
 
     public static function enqueue_assets(string $hook): void {
-        $admin_pages = ['toplevel_page_wkel_leads', 'event-leads_page_wkel_all_leads'];
+        $admin_pages = ['toplevel_page_wkel_leads', 'event-leads_page_wkel_all_leads', 'event-leads_page_wkel_campaigns'];
 
         if (!in_array($hook, $admin_pages, true)) {
             return;
@@ -188,8 +188,16 @@ class WKEL_Admin {
                 <select name="wkel_email_status">
                     <option value=""><?php esc_html_e('All Email Statuses', 'wk-event-leads'); ?></option>
                     <option value="queued"  <?php selected($_GET['wkel_email_status'] ?? '', 'queued'); ?>><?php esc_html_e('Queued', 'wk-event-leads'); ?></option>
+                    <option value="not_sent" <?php selected($_GET['wkel_email_status'] ?? '', 'not_sent'); ?>><?php esc_html_e('Not Sent', 'wk-event-leads'); ?></option>
                     <option value="sent"    <?php selected($_GET['wkel_email_status'] ?? '', 'sent'); ?>><?php esc_html_e('Sent', 'wk-event-leads'); ?></option>
                     <option value="failed"  <?php selected($_GET['wkel_email_status'] ?? '', 'failed'); ?>><?php esc_html_e('Failed', 'wk-event-leads'); ?></option>
+                    <option value="unsubscribed" <?php selected($_GET['wkel_email_status'] ?? '', 'unsubscribed'); ?>><?php esc_html_e('Unsubscribed', 'wk-event-leads'); ?></option>
+                </select>
+
+                <select name="wkel_marketing_status">
+                    <option value=""><?php esc_html_e('All Marketing Statuses', 'wk-event-leads'); ?></option>
+                    <option value="subscribed" <?php selected($_GET['wkel_marketing_status'] ?? '', 'subscribed'); ?>><?php esc_html_e('Subscribed', 'wk-event-leads'); ?></option>
+                    <option value="unsubscribed" <?php selected($_GET['wkel_marketing_status'] ?? '', 'unsubscribed'); ?>><?php esc_html_e('Unsubscribed', 'wk-event-leads'); ?></option>
                 </select>
 
                 <?php submit_button(__('Filter', 'wk-event-leads'), 'secondary', 'filter_action', false); ?>
@@ -231,6 +239,11 @@ class WKEL_Admin {
 
             case 'resend_email':
                 foreach ($lead_ids as $id) {
+                    if (class_exists('WKEL_Campaign') && WKEL_Campaign::is_lead_suppressed($id)) {
+                        update_post_meta($id, '_wkel_email_status', 'unsubscribed');
+                        WKEL_Submission::log_activity($id, 'email_suppressed', 'Resend skipped because the contact has opted out.');
+                        continue;
+                    }
                     update_post_meta($id, '_wkel_email_status', 'queued');
                     update_post_meta($id, '_wkel_email_attempts', 0);
                     if (function_exists('as_schedule_single_action')) {
@@ -257,7 +270,7 @@ class WKEL_Admin {
 
     private static function filter_query_string(): string {
         $params = [];
-        foreach (['wkel_event', 'wkel_stage', 'wkel_email_status', 's'] as $key) {
+        foreach (['wkel_event', 'wkel_stage', 'wkel_email_status', 'wkel_marketing_status', 's'] as $key) {
             if (!empty($_GET[$key])) {
                 $params['&' . $key . '='] = sanitize_text_field($_GET[$key]);
             }
@@ -305,6 +318,9 @@ class WKEL_Lead_List_Table extends WP_List_Table {
         $columns = apply_filters('wkel_lead_list_columns', $columns);
 
         $columns['_wkel_event']        = __('Event', 'wk-event-leads');
+        $columns['_wkel_campaign']     = __('Campaign', 'wk-event-leads');
+        $columns['_wkel_list_type']    = __('List', 'wk-event-leads');
+        $columns['_wkel_marketing_status'] = __('Marketing', 'wk-event-leads');
         $columns['_wkel_stage']        = __('Stage', 'wk-event-leads');
         $columns['post_date']          = __('Submitted', 'wk-event-leads');
         $columns['_wkel_email_status'] = __('Email', 'wk-event-leads');
@@ -315,6 +331,9 @@ class WKEL_Lead_List_Table extends WP_List_Table {
     public function get_sortable_columns(): array {
         return [
             '_wkel_event'        => ['_wkel_event', false],
+            '_wkel_campaign'     => ['_wkel_campaign', false],
+            '_wkel_list_type'    => ['_wkel_list_type', false],
+            '_wkel_marketing_status' => ['_wkel_marketing_status', false],
             '_wkel_stage'        => ['_wkel_stage', false],
             'post_date'          => ['date', true],
             '_wkel_email_status' => ['_wkel_email_status', false],
@@ -358,6 +377,9 @@ class WKEL_Lead_List_Table extends WP_List_Table {
         if (!empty($_GET['wkel_email_status'])) {
             $meta_query[] = ['key' => '_wkel_email_status', 'value' => sanitize_key($_GET['wkel_email_status'])];
         }
+        if (!empty($_GET['wkel_marketing_status'])) {
+            $meta_query[] = ['key' => '_wkel_marketing_status', 'value' => sanitize_key($_GET['wkel_marketing_status'])];
+        }
 
         if (!empty($meta_query)) {
             $meta_query['relation'] = 'AND';
@@ -373,7 +395,7 @@ class WKEL_Lead_List_Table extends WP_List_Table {
         $order   = strtoupper(sanitize_key($_GET['order'] ?? 'DESC'));
         $order   = in_array($order, ['ASC', 'DESC'], true) ? $order : 'DESC';
 
-        if (in_array($orderby, ['_wkel_event', '_wkel_stage', '_wkel_email_status'], true)) {
+        if (in_array($orderby, ['_wkel_event', '_wkel_campaign', '_wkel_list_type', '_wkel_marketing_status', '_wkel_stage', '_wkel_email_status'], true)) {
             $query_args['meta_key'] = $orderby;
             $query_args['orderby']  = 'meta_value';
             $query_args['order']    = $order;
@@ -408,6 +430,16 @@ class WKEL_Lead_List_Table extends WP_List_Table {
             case '_wkel_event':
                 return esc_html(get_post_meta($item->ID, '_wkel_event', true));
 
+            case '_wkel_campaign':
+                return esc_html(get_post_meta($item->ID, '_wkel_campaign', true));
+
+            case '_wkel_list_type':
+                return esc_html(str_replace('_', ' ', get_post_meta($item->ID, '_wkel_list_type', true)));
+
+            case '_wkel_marketing_status':
+                $status = get_post_meta($item->ID, '_wkel_marketing_status', true) ?: 'subscribed';
+                return self::marketing_status_badge($status);
+
             case '_wkel_stage':
                 $stage_id  = get_post_meta($item->ID, '_wkel_stage', true);
                 $stage_obj = WKEL_Schema::get_stage($stage_id);
@@ -434,10 +466,22 @@ class WKEL_Lead_List_Table extends WP_List_Table {
     }
 
     private static function email_status_badge(string $status): string {
-        $colors = ['queued' => '#9CA3AF', 'sent' => '#10B981', 'failed' => '#EF4444'];
-        $labels = ['queued' => 'Queued', 'sent' => 'Sent', 'failed' => 'Failed'];
+        $colors = ['not_sent' => '#6B7280', 'queued' => '#9CA3AF', 'sent' => '#10B981', 'failed' => '#EF4444', 'unsubscribed' => '#7C3AED'];
+        $labels = ['not_sent' => 'Not Sent', 'queued' => 'Queued', 'sent' => 'Sent', 'failed' => 'Failed', 'unsubscribed' => 'Unsubscribed'];
         $color  = $colors[$status] ?? '#9CA3AF';
         $label  = $labels[$status] ?? $status;
+        return sprintf(
+            '<span class="wkel-email-badge" style="display:inline-flex;align-items:center;gap:4px;">'
+            . '<span style="width:8px;height:8px;border-radius:50%%;background:%s;display:inline-block;"></span>'
+            . '%s</span>',
+            esc_attr($color),
+            esc_html($label)
+        );
+    }
+
+    private static function marketing_status_badge(string $status): string {
+        $color = $status === 'unsubscribed' ? '#7C3AED' : '#10B981';
+        $label = $status === 'unsubscribed' ? 'Unsubscribed' : 'Subscribed';
         return sprintf(
             '<span class="wkel-email-badge" style="display:inline-flex;align-items:center;gap:4px;">'
             . '<span style="width:8px;height:8px;border-radius:50%%;background:%s;display:inline-block;"></span>'

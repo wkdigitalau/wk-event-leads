@@ -14,6 +14,12 @@ class WKEL_Email {
             return;
         }
 
+        if (class_exists('WKEL_Campaign') && WKEL_Campaign::is_lead_suppressed($lead_id)) {
+            update_post_meta($lead_id, '_wkel_email_status', 'unsubscribed');
+            WKEL_Submission::log_activity($lead_id, 'email_suppressed', 'Email was not sent because the contact has opted out.');
+            return;
+        }
+
         $attempts = (int) get_post_meta($lead_id, '_wkel_email_attempts', true);
 
         if ($attempts >= self::MAX_ATTEMPTS) {
@@ -174,6 +180,10 @@ class WKEL_Email {
         $vars['sender_name']   = sanitize_text_field(get_option('wkel_sender_name', ''));
         $vars['sender_phone']  = sanitize_text_field(get_option('wkel_sender_phone', ''));
         $vars['sender_email']  = sanitize_email(get_option('wkel_sender_email', ''));
+        $lead_email            = self::get_lead_email($lead_id);
+        $vars['unsubscribe_url'] = class_exists('WKEL_Campaign')
+            ? WKEL_Campaign::unsubscribe_url_for_email($lead_email)
+            : home_url('/unsubscribe/');
 
         return $vars;
     }
@@ -213,6 +223,7 @@ class WKEL_Email {
             'sender_name'  => get_option('wkel_sender_name', 'Test Sender'),
             'sender_phone' => get_option('wkel_sender_phone', ''),
             'sender_email' => get_option('wkel_sender_email', ''),
+            'unsubscribe_url' => home_url('/unsubscribe/'),
         ];
 
         $body    = self::replace_template_vars(get_option('wkel_email_body', 'Test email from WK Event Leads.'), $sample_vars);

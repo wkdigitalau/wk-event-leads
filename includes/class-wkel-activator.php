@@ -8,6 +8,9 @@ class WKEL_Activator {
 
         WKEL_Schema::seed_defaults();
         WKEL_CPT::register();
+        if (class_exists('WKEL_Campaign')) {
+            WKEL_Campaign::add_rewrite_rules();
+        }
         flush_rewrite_rules();
 
         if (!defined('WKEL_ENCRYPTION_KEY')) {
@@ -43,6 +46,7 @@ class WKEL_Activator {
         $files = [
             'class-wkel-schema.php',
             'class-wkel-cpt.php',
+            'class-wkel-campaign.php',
         ];
         foreach ($files as $file) {
             $path = WKEL_PLUGIN_DIR . 'includes/' . $file;
@@ -78,6 +82,8 @@ class WKEL_Activator {
 <p>Thanks again, and I look forward to staying in touch.</p>
 
 <p>{{sender_name}}<br>
-{{sender_phone}} | {{sender_email}}</p>';
+{{sender_phone}} | {{sender_email}}</p>
+
+<p style="font-size:12px;color:#6b7280;">You can opt out of future marketing emails here: <a href="{{unsubscribe_url}}">{{unsubscribe_url}}</a></p>';
     }
 }

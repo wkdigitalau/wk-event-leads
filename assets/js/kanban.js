@@ -115,6 +115,9 @@
             + '<div><strong>Stage:</strong> ' + esc(lead.stage_label) + '</div>'
             + '<div><strong>Email:</strong> ' + esc(lead.email_status) + (lead.email_sent_at ? ' — ' + formatDate(lead.email_sent_at) : '') + '</div>'
             + '<div><strong>Event:</strong> ' + esc(lead.event) + '</div>'
+            + '<div><strong>Campaign:</strong> ' + esc(lead.campaign || '—') + '</div>'
+            + '<div><strong>List:</strong> ' + esc((lead.list_type || '—').replace(/_/g, ' ')) + '</div>'
+            + '<div><strong>Marketing:</strong> ' + esc(lead.marketing_status || 'subscribed') + (lead.unsubscribed_at ? ' — ' + formatDate(lead.unsubscribed_at) : '') + '</div>'
             + '<div><strong>Submitted:</strong> ' + (lead.submitted_at ? formatDate(lead.submitted_at) : '—') + '</div>'
             + '</div>';
 
@@ -151,7 +154,7 @@
         // Actions
         html += '<div class="wkel-detail-actions">'
             + '<button class="button button-primary" id="wkel-detail-save" data-lead-id="' + lead.id + '">Save Changes</button>'
-            + '<button class="button" id="wkel-detail-resend" data-lead-id="' + lead.id + '">Resend Email</button>'
+            + '<button class="button" id="wkel-detail-resend" data-lead-id="' + lead.id + '"' + (lead.marketing_status === 'unsubscribed' ? ' disabled' : '') + '>Resend Email</button>'
             + '<button class="button button-link-delete" id="wkel-detail-delete" data-lead-id="' + lead.id + '">Delete</button>'
             + '</div>';
 
@@ -286,7 +289,7 @@
         modal.addEventListener('click', function (e) { if (e.target === modal) modal.style.display = 'none'; });
 
         submitBtn.addEventListener('click', function () {
-            const payload = { source: 'admin' };
+            const payload = { source: 'admin', wkel_privacy: '1' };
             formWrap.querySelectorAll('[data-field]').forEach(function (el) {
                 payload[el.dataset.field] = el.value;
             });

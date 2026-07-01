@@ -208,7 +208,7 @@ class WKEL_Settings {
                     );
                     ?>
                     <p class="description">
-                        <?php esc_html_e('Template variables: {{first_name}} {{full_name}} {{organisation}} {{event_name}} {{atncs_url}} {{enp_url}} {{sender_name}} {{sender_phone}} {{sender_email}}', 'wk-event-leads'); ?>
+                        <?php esc_html_e('Template variables: {{first_name}} {{full_name}} {{organisation}} {{event_name}} {{atncs_url}} {{enp_url}} {{sender_name}} {{sender_phone}} {{sender_email}} {{unsubscribe_url}}', 'wk-event-leads'); ?>
                     </p>
                 </td>
             </tr>

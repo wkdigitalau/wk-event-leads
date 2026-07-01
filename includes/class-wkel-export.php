@@ -28,6 +28,10 @@ class WKEL_Export {
             $header[] = $field['label'];
         }
         $header[] = 'Event';
+        $header[] = 'Campaign';
+        $header[] = 'List Type';
+        $header[] = 'Marketing Status';
+        $header[] = 'Unsubscribed At';
         $header[] = 'Stage';
         $header[] = 'Submitted';
         $header[] = 'Email Status';
@@ -53,6 +57,9 @@ class WKEL_Export {
         if (!empty($filters['wkel_email_status'])) {
             $meta_query[] = ['key' => '_wkel_email_status', 'value' => sanitize_key($filters['wkel_email_status'])];
         }
+        if (!empty($filters['wkel_marketing_status'])) {
+            $meta_query[] = ['key' => '_wkel_marketing_status', 'value' => sanitize_key($filters['wkel_marketing_status'])];
+        }
         if (!empty($meta_query)) {
             $meta_query['relation'] = 'AND';
             $query_args['meta_query'] = $meta_query;
@@ -76,6 +83,11 @@ class WKEL_Export {
 
             $stage_id = get_post_meta($post->ID, '_wkel_stage', true);
             $row[]    = get_post_meta($post->ID, '_wkel_event', true);
+            $row[]    = get_post_meta($post->ID, '_wkel_campaign', true);
+            $row[]    = get_post_meta($post->ID, '_wkel_list_type', true);
+            $row[]    = get_post_meta($post->ID, '_wkel_marketing_status', true) ?: 'subscribed';
+            $unsubscribed_at = (int) get_post_meta($post->ID, '_wkel_unsubscribed_at', true);
+            $row[]    = $unsubscribed_at ? wp_date('Y-m-d H:i:s', $unsubscribed_at) : '';
             $row[]    = $stage_map[$stage_id] ?? $stage_id;
             $row[]    = get_the_date('Y-m-d H:i:s', $post->ID);
             $row[]    = get_post_meta($post->ID, '_wkel_email_status', true);
