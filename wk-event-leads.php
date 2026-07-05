@@ -4,6 +4,8 @@
  * Plugin URI:     https://wkdigital.com.au
  * Description:    Schema-driven lead capture, pipeline management, and automated follow-up for WK Digital client sites.
  * Version:        1.0.0
+ * GitHub Plugin URI: https://github.com/wkdigitalau/wk-event-leads
+ * Primary Branch: main
  * Author:         WK Digital
  * Author URI:     https://wkdigital.com.au
  * Text Domain:    wk-event-leads
@@ -14,7 +16,7 @@
 
 defined('ABSPATH') || exit;
 
-define('WKEL_VERSION',     '1.0.0');
+define('WKEL_VERSION',     '1.0.1');
 define('WKEL_PLUGIN_FILE', __FILE__);
 define('WKEL_PLUGIN_DIR',  plugin_dir_path(__FILE__));
 define('WKEL_PLUGIN_URL',  plugin_dir_url(__FILE__));
