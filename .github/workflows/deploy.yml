@@ -54,4 +54,9 @@ jobs:
               find "$directory" -type f -exec chmod 644 {} \;
               find "$directory" -type d -exec chmod 755 {} \;
             done
+            echo "Remote Event Leads verification:"
+            ls -l "$PLUGIN_ROOT/wk-event-leads.php" "$PLUGIN_ROOT/assets/js/kanban.js" "$PLUGIN_ROOT/includes/class-wkel-submission.php"
+            grep -m1 '^ \* Version:' "$PLUGIN_ROOT/wk-event-leads.php" || true
+            grep -m1 "define('WKEL_VERSION'" "$PLUGIN_ROOT/wk-event-leads.php" || true
+            sha256sum "$PLUGIN_ROOT/wk-event-leads.php" "$PLUGIN_ROOT/assets/js/kanban.js" "$PLUGIN_ROOT/includes/class-wkel-submission.php"
             echo "Deployed wk-event-leads at $(date)"
