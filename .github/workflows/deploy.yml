@@ -15,7 +15,7 @@ jobs:
       - name: Copy plugin files to server
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: 149.28.165.62
+          host: 163.53.249.55
           username: root
           key: ${{ secrets.VULTR_SSH_KEY }}
           source: "."
@@ -26,7 +26,7 @@ jobs:
       - name: Fix permissions
         uses: appleboy/ssh-action@v1
         with:
-          host: 149.28.165.62
+          host: 163.53.249.55
           username: root
           key: ${{ secrets.VULTR_SSH_KEY }}
           script: |
