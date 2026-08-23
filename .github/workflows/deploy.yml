@@ -1,4 +1,4 @@
-name: Deploy WK Event Leads to wkdigital.com.au
+name: Deploy to connect.digitalp.com.au
 
 on:
   push:
@@ -15,56 +15,24 @@ jobs:
       - name: Copy plugin files to server
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: 163.53.249.55
+          host: 149.28.165.62
           username: root
           key: ${{ secrets.VULTR_SSH_KEY }}
           source: "."
-          target: "/var/www/vhosts/wkdigital.com.au/httpdocs/wp-content/plugins"
+          target: "/var/www/connect.digitalp.com.au/wp-content/plugins/wk-event-leads"
           strip_components: 1
           rm: false
 
       - name: Fix permissions
         uses: appleboy/ssh-action@v1
         with:
-          host: 163.53.249.55
+          host: 149.28.165.62
           username: root
           key: ${{ secrets.VULTR_SSH_KEY }}
           script: |
             set -e
-            PLUGIN_ROOT="/var/www/vhosts/wkdigital.com.au/httpdocs/wp-content/plugins"
-            FILES=(
-              "$PLUGIN_ROOT/wk-event-leads.php"
-              "$PLUGIN_ROOT/uninstall.php"
-            )
-            DIRECTORIES=(
-              "$PLUGIN_ROOT/assets"
-              "$PLUGIN_ROOT/includes"
-              "$PLUGIN_ROOT/languages"
-              "$PLUGIN_ROOT/modules"
-              "$PLUGIN_ROOT/templates"
-            )
-            for file in "${FILES[@]}"; do
-              [ -f "$file" ] || continue
-              chown www-data:www-data "$file"
-              chmod 644 "$file"
-            done
-            for directory in "${DIRECTORIES[@]}"; do
-              [ -d "$directory" ] || continue
-              chown -R www-data:www-data "$directory"
-              find "$directory" -type f -exec chmod 644 {} \;
-              find "$directory" -type d -exec chmod 755 {} \;
-            done
-            echo "Plesk PHP handler discovery:"
-            plesk bin site --info wkdigital.com.au | grep -iE 'PHP|handler' || true
-            systemctl list-units --type=service --state=running 'plesk-php*-fpm.service' --no-legend || true
-            echo "PHP-FPM process discovery:"
-            ps -eo pid,comm,args | grep '[p]hp-fpm' || true
-            systemctl list-units --type=service --all --no-legend | grep -iE 'php.*fpm|fpm.*php' || true
-            systemctl reload php8.2-fpm.service
-            echo "Reloaded php8.2-fpm.service to clear PHP OPcache"
-            echo "Remote Event Leads verification:"
-            ls -l "$PLUGIN_ROOT/wk-event-leads.php" "$PLUGIN_ROOT/assets/js/kanban.js" "$PLUGIN_ROOT/includes/class-wkel-submission.php"
-            grep -m1 '^ \* Version:' "$PLUGIN_ROOT/wk-event-leads.php" || true
-            grep -m1 "define('WKEL_VERSION'" "$PLUGIN_ROOT/wk-event-leads.php" || true
-            sha256sum "$PLUGIN_ROOT/wk-event-leads.php" "$PLUGIN_ROOT/assets/js/kanban.js" "$PLUGIN_ROOT/includes/class-wkel-submission.php"
+            PLUGIN="/var/www/connect.digitalp.com.au/wp-content/plugins/wk-event-leads"
+            chown -R www-data:www-data "$PLUGIN"
+            find "$PLUGIN" -type f -exec chmod 644 {} \;
+            find "$PLUGIN" -type d -exec chmod 755 {} \;
             echo "Deployed wk-event-leads at $(date)"
