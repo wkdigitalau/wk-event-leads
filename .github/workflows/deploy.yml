@@ -1,4 +1,4 @@
-name: Deploy to connect.digitalp.com.au
+name: Deploy WK Event Leads to wkdigital.com.au
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
           username: root
           key: ${{ secrets.VULTR_SSH_KEY }}
           source: "."
-          target: "/var/www/connect.digitalp.com.au/wp-content/plugins/wk-event-leads"
+          target: "/var/www/vhosts/wkdigital.com.au/httpdocs/wp-content/plugins"
           strip_components: 1
           rm: false
 
@@ -31,8 +31,27 @@ jobs:
           key: ${{ secrets.VULTR_SSH_KEY }}
           script: |
             set -e
-            PLUGIN="/var/www/connect.digitalp.com.au/wp-content/plugins/wk-event-leads"
-            chown -R www-data:www-data "$PLUGIN"
-            find "$PLUGIN" -type f -exec chmod 644 {} \;
-            find "$PLUGIN" -type d -exec chmod 755 {} \;
+            PLUGIN_ROOT="/var/www/vhosts/wkdigital.com.au/httpdocs/wp-content/plugins"
+            FILES=(
+              "$PLUGIN_ROOT/wk-event-leads.php"
+              "$PLUGIN_ROOT/uninstall.php"
+            )
+            DIRECTORIES=(
+              "$PLUGIN_ROOT/assets"
+              "$PLUGIN_ROOT/includes"
+              "$PLUGIN_ROOT/languages"
+              "$PLUGIN_ROOT/modules"
+              "$PLUGIN_ROOT/templates"
+            )
+            for file in "${FILES[@]}"; do
+              [ -f "$file" ] || continue
+              chown www-data:www-data "$file"
+              chmod 644 "$file"
+            done
+            for directory in "${DIRECTORIES[@]}"; do
+              [ -d "$directory" ] || continue
+              chown -R www-data:www-data "$directory"
+              find "$directory" -type f -exec chmod 644 {} \;
+              find "$directory" -type d -exec chmod 755 {} \;
+            done
             echo "Deployed wk-event-leads at $(date)"
