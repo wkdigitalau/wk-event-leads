@@ -57,6 +57,9 @@ jobs:
             echo "Plesk PHP handler discovery:"
             plesk bin site --info wkdigital.com.au | grep -iE 'PHP|handler' || true
             systemctl list-units --type=service --state=running 'plesk-php*-fpm.service' --no-legend || true
+            echo "PHP-FPM process discovery:"
+            ps -eo pid,comm,args | grep '[p]hp-fpm' || true
+            systemctl list-units --type=service --all --no-legend | grep -iE 'php.*fpm|fpm.*php' || true
             echo "Remote Event Leads verification:"
             ls -l "$PLUGIN_ROOT/wk-event-leads.php" "$PLUGIN_ROOT/assets/js/kanban.js" "$PLUGIN_ROOT/includes/class-wkel-submission.php"
             grep -m1 '^ \* Version:' "$PLUGIN_ROOT/wk-event-leads.php" || true
