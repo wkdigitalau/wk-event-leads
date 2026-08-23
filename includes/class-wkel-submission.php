@@ -60,15 +60,16 @@ class WKEL_Submission {
     public static function handle(WP_REST_Request $request): WP_REST_Response {
         $body        = $request->get_json_params();
         $silent_ok   = new WP_REST_Response(['success' => true, 'message' => get_option('wkel_success_message', 'Thanks — check your inbox.')]);
+        $admin_submit = sanitize_key($body['source'] ?? '') === 'admin' && self::admin_permission();
 
         // 1. Honeypot
-        if (WKEL_Security::honeypot_triggered($body)) {
+        if (!$admin_submit && WKEL_Security::honeypot_triggered($body)) {
             return $silent_ok;
         }
 
         // 3. Rate limit
         $ip = WKEL_Security::get_submitter_ip();
-        if (WKEL_Security::rate_limit_exceeded($ip)) {
+        if (!$admin_submit && WKEL_Security::rate_limit_exceeded($ip)) {
             return $silent_ok;
         }
 
@@ -103,7 +104,7 @@ class WKEL_Submission {
         }
 
         // 5. Privacy checkbox
-        if (empty($body['wkel_privacy']) || $body['wkel_privacy'] !== '1') {
+        if (!$admin_submit && (empty($body['wkel_privacy']) || $body['wkel_privacy'] !== '1')) {
             return new WP_REST_Response([
                 'success' => false,
                 'errors'  => ['wkel_privacy' => __('You must accept the Privacy Policy.', 'wk-event-leads')],
@@ -112,12 +113,12 @@ class WKEL_Submission {
 
         // 6. Duplicate check — same email + same event within 24 hours
         $event = sanitize_key($body['event'] ?? 'general');
-        if (self::is_duplicate($sanitised, $event)) {
+        if (!$admin_submit && self::is_duplicate($sanitised, $event)) {
             return $silent_ok;
         }
 
         // Create lead
-        $lead_id = self::create_lead($sanitised, $event, $ip);
+        $lead_id = self::create_lead($sanitised, $event, $ip, $admin_submit ? 'admin' : 'direct');
 
         if (is_wp_error($lead_id)) {
             return new WP_REST_Response(['success' => false, 'message' => __('Could not save your submission. Please try again.', 'wk-event-leads')], 500);
@@ -167,7 +168,7 @@ class WKEL_Submission {
         return !empty($existing);
     }
 
-    private static function create_lead(array $sanitised, string $event, string $ip): int|WP_Error {
+    public static function create_lead(array $sanitised, string $event, string $ip, string $source = 'direct'): int|WP_Error {
         // Determine organisation for post title
         $org = '';
         foreach (WKEL_Schema::get_fields() as $field) {
@@ -224,7 +225,7 @@ class WKEL_Submission {
             '_wkel_email_attempts'  => 0,
             '_wkel_privacy_accepted'=> '1',
             '_wkel_submitted_at'    => time(),
-            '_wkel_source'          => 'direct',
+            '_wkel_source'          => sanitize_key($source),
         ];
 
         foreach ($system_meta as $key => $value) {
@@ -232,7 +233,10 @@ class WKEL_Submission {
         }
 
         // Activity log
-        self::log_activity($lead_id, 'submitted', 'Lead submitted via form.');
+        $message = $source === 'direct'
+            ? 'Lead submitted via form.'
+            : sprintf('Lead submitted via %s.', $source);
+        self::log_activity($lead_id, 'submitted', $message);
 
         return $lead_id;
     }

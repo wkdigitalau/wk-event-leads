@@ -296,12 +296,25 @@
 
             apiFetch('submit', 'POST', payload, true).then(async function (res) {
                 const data = await res.json();
-                if (data.success) {
+                if (!res.ok || !data.success) {
+                    const firstError = data.errors ? Object.values(data.errors)[0] : '';
+                    throw new Error(data.message || firstError || 'Submission failed.');
+                } else {
                     modal.style.display = 'none';
                     window.location.reload();
-                } else {
-                    alert(data.message || 'Submission failed.');
                 }
+            }).catch(async function (error) {
+                let message = error?.message || 'Could not save the lead. Please try again.';
+                if (error && typeof error.json === 'function') {
+                    try {
+                        const data = await error.json();
+                        const firstError = data.errors ? Object.values(data.errors)[0] : '';
+                        message = data.message || firstError || message;
+                    } catch (ignored) {
+                        // Keep the generic message when the response is not JSON.
+                    }
+                }
+                alert(message);
             });
         });
     }
