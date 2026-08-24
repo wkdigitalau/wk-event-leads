@@ -228,6 +228,31 @@
             });
         });
 
+        // Add a chronological activity to this lead.
+        document.getElementById('wkel-activity-add').addEventListener('click', function () {
+            const id = parseInt(this.dataset.leadId, 10);
+            const message = document.getElementById('wkel-activity-message').value.trim();
+            if (!message) {
+                showDetailNotice(container, 'Enter an activity description first.', 'error');
+                return;
+            }
+            const button = this;
+            button.disabled = true;
+            apiFetch('lead/' + id + '/activities', 'POST', {
+                type: document.getElementById('wkel-activity-type').value,
+                message: message,
+            }).then(async function (res) {
+                if (!res.ok) {
+                    throw new Error('Activity could not be saved.');
+                }
+                showDetailNotice(container, 'Activity added.', 'success');
+                openDetailPanel(id);
+            }).catch(function () {
+                showDetailNotice(container, 'Activity could not be saved.', 'error');
+                button.disabled = false;
+            });
+        });
+
         // Resend email
         document.getElementById('wkel-detail-resend').addEventListener('click', function () {
             const id = parseInt(this.dataset.leadId, 10);
@@ -339,31 +364,6 @@
                     }
                 }
                 alert(message);
-            });
-        });
-
-        // Add a chronological activity to this lead.
-        document.getElementById('wkel-activity-add').addEventListener('click', function () {
-            const id = parseInt(this.dataset.leadId, 10);
-            const message = document.getElementById('wkel-activity-message').value.trim();
-            if (!message) {
-                showDetailNotice(container, 'Enter an activity description first.', 'error');
-                return;
-            }
-            const button = this;
-            button.disabled = true;
-            apiFetch('lead/' + id + '/activities', 'POST', {
-                type: document.getElementById('wkel-activity-type').value,
-                message: message,
-            }).then(async function (res) {
-                if (!res.ok) {
-                    throw new Error('Activity could not be saved.');
-                }
-                showDetailNotice(container, 'Activity added.', 'success');
-                openDetailPanel(id);
-            }).catch(function () {
-                showDetailNotice(container, 'Activity could not be saved.', 'error');
-                button.disabled = false;
             });
         });
 
