@@ -16,16 +16,19 @@ class WKEL_Encryption {
     private const PREFIX = 'wkel_enc:';
 
     public static function encrypt(string $plaintext): string {
-        if (!self::keys_defined()) {
+        $key = self::key();
+        $iv  = self::iv();
+
+        if ($key === null || $iv === null) {
             return $plaintext;
         }
 
         $encrypted = openssl_encrypt(
             $plaintext,
             'AES-256-CBC',
-            hex2bin(WKEL_ENCRYPTION_KEY),
+            $key,
             0,
-            hex2bin(WKEL_ENCRYPTION_IV)
+            $iv
         );
 
         if ($encrypted === false) {
@@ -36,7 +39,10 @@ class WKEL_Encryption {
     }
 
     public static function decrypt(string $ciphertext): string {
-        if (!self::keys_defined()) {
+        $key = self::key();
+        $iv  = self::iv();
+
+        if ($key === null || $iv === null) {
             return $ciphertext;
         }
 
@@ -53,9 +59,9 @@ class WKEL_Encryption {
         $decrypted = openssl_decrypt(
             $decoded,
             'AES-256-CBC',
-            hex2bin(WKEL_ENCRYPTION_KEY),
+            $key,
             0,
-            hex2bin(WKEL_ENCRYPTION_IV)
+            $iv
         );
 
         return $decrypted !== false ? $decrypted : '';
@@ -65,7 +71,41 @@ class WKEL_Encryption {
         return str_starts_with($value, self::PREFIX);
     }
 
-    private static function keys_defined(): bool {
-        return defined('WKEL_ENCRYPTION_KEY') && defined('WKEL_ENCRYPTION_IV');
+    private static function key(): ?string {
+        return self::hex_constant('WKEL_ENCRYPTION_KEY', 64);
+    }
+
+    private static function iv(): ?string {
+        if (!defined('WKEL_ENCRYPTION_IV')) {
+            return null;
+        }
+
+        $value = (string) constant('WKEL_ENCRYPTION_IV');
+
+        // The original production config used an 8-byte IV. OpenSSL padded
+        // it with NUL bytes, so preserve that behaviour for existing leads
+        // while preventing the warning that was breaking the detail request.
+        if (strlen($value) === 16 && ctype_xdigit($value)) {
+            $decoded = hex2bin($value);
+            return $decoded === false ? null : str_pad($decoded, 16, "\0");
+        }
+
+        return self::hex_constant('WKEL_ENCRYPTION_IV', 32);
+    }
+
+    private static function hex_constant(string $name, int $expected_length): ?string {
+        if (!defined($name)) {
+            return null;
+        }
+
+        $value = (string) constant($name);
+
+        if (strlen($value) !== $expected_length || !ctype_xdigit($value)) {
+            return null;
+        }
+
+        $decoded = hex2bin($value);
+
+        return $decoded === false ? null : $decoded;
     }
 }
