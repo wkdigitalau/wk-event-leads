@@ -41,7 +41,7 @@ class WKEL_Email {
 
         $payload = apply_filters('wkel_email_payload', $payload, $lead_id);
 
-        $api_key = WKEL_Encryption::decrypt(get_option('wkel_sendgrid_key', ''));
+        $api_key = WKEL_Encryption::decrypt(get_option('wkel_resend_key', ''));
 
         if (!$api_key) {
             update_post_meta($lead_id, '_wkel_email_status', 'failed');
@@ -49,10 +49,11 @@ class WKEL_Email {
             return;
         }
 
-        $response = wp_remote_post('https://api.sendgrid.com/v3/mail/send', [
+        $response = wp_remote_post('https://api.resend.com/emails', [
             'headers' => [
                 'Authorization' => 'Bearer ' . $api_key,
                 'Content-Type'  => 'application/json',
+                'Idempotency-Key'=> 'wkel-lead-' . $lead_id . '-confirmation',
             ],
             'body'    => wp_json_encode($payload),
             'timeout' => 15,
@@ -66,9 +67,13 @@ class WKEL_Email {
         $code = wp_remote_retrieve_response_code($response);
 
         if ($code >= 200 && $code < 300) {
+            $response_body = json_decode(wp_remote_retrieve_body($response), true) ?: [];
             update_post_meta($lead_id, '_wkel_email_status', 'sent');
             update_post_meta($lead_id, '_wkel_email_sent_at', time());
-            WKEL_Submission::log_activity($lead_id, 'email_sent', 'Confirmation email sent successfully.');
+            if (!empty($response_body['id'])) {
+                update_post_meta($lead_id, '_wkel_resend_email_id', sanitize_text_field($response_body['id']));
+            }
+            WKEL_Submission::log_activity($lead_id, 'email_sent', 'Confirmation email sent through Resend.', !empty($response_body['id']) ? $response_body['id'] : null);
             do_action('wkel_email_sent', $lead_id);
         } else {
             self::schedule_retry($lead_id);
@@ -115,19 +120,14 @@ class WKEL_Email {
         $body    = self::replace_template_vars(get_option('wkel_email_body', ''), $vars);
 
         $payload = [
-            'personalizations' => [[
-                'to'      => [['email' => $to_email]],
-                'subject' => $subject,
-            ]],
-            'from'    => ['email' => $from_address, 'name' => $from_name],
-            'content' => [[
-                'type'  => 'text/html',
-                'value' => $body,
-            ]],
+            'from'    => $from_name ? $from_name . ' <' . $from_address . '>' : $from_address,
+            'to'      => [$to_email],
+            'subject' => $subject,
+            'html'    => $body,
         ];
 
         if ($reply_to) {
-            $payload['reply_to'] = ['email' => $reply_to];
+            $payload['reply_to'] = [$reply_to];
         }
 
         return $payload;
@@ -203,9 +203,9 @@ class WKEL_Email {
      * Send a test email to the admin address.
      */
     public static function send_test(string $to_email): bool|string {
-        $api_key = WKEL_Encryption::decrypt(get_option('wkel_sendgrid_key', ''));
+        $api_key = WKEL_Encryption::decrypt(get_option('wkel_resend_key', ''));
         if (!$api_key) {
-            return 'SendGrid API key is not configured.';
+            return 'Resend API key is not configured.';
         }
 
         $from_address = sanitize_email(get_option('wkel_email_from_address', ''));
@@ -229,16 +229,19 @@ class WKEL_Email {
         $body    = self::replace_template_vars(get_option('wkel_email_body', 'Test email from WK Event Leads.'), $sample_vars);
         $subject = '[TEST] ' . sanitize_text_field(get_option('wkel_email_subject', 'Test Email'));
 
+        $from_name = sanitize_text_field(get_option('wkel_email_from_name', ''));
         $payload = [
-            'personalizations' => [['to' => [['email' => $to_email]], 'subject' => $subject]],
-            'from'             => ['email' => $from_address, 'name' => sanitize_text_field(get_option('wkel_email_from_name', ''))],
-            'content'          => [['type' => 'text/html', 'value' => $body]],
+            'from'    => $from_name ? $from_name . ' <' . $from_address . '>' : $from_address,
+            'to'      => [$to_email],
+            'subject' => $subject,
+            'html'    => $body,
         ];
 
-        $response = wp_remote_post('https://api.sendgrid.com/v3/mail/send', [
+        $response = wp_remote_post('https://api.resend.com/emails', [
             'headers' => [
                 'Authorization' => 'Bearer ' . $api_key,
                 'Content-Type'  => 'application/json',
+                'Idempotency-Key'=> 'wkel-test-' . wp_generate_uuid4(),
             ],
             'body'    => wp_json_encode($payload),
             'timeout' => 15,
@@ -249,6 +252,166 @@ class WKEL_Email {
         }
 
         $code = wp_remote_retrieve_response_code($response);
-        return ($code >= 200 && $code < 300) ? true : 'SendGrid error (HTTP ' . $code . '): ' . wp_remote_retrieve_body($response);
+        return ($code >= 200 && $code < 300) ? true : 'Resend error (HTTP ' . $code . '): ' . wp_remote_retrieve_body($response);
+    }
+
+    /**
+     * Receive and verify Resend/Svix webhook events.
+     * Resend sends both outbound delivery events and email.received events.
+     */
+    public static function handle_webhook(WP_REST_Request $request): WP_REST_Response {
+        $secret = WKEL_Encryption::decrypt(get_option('wkel_resend_webhook_secret', ''));
+        $body = $request->get_body();
+        $svix_id = $request->get_header('svix-id');
+        $svix_timestamp = $request->get_header('svix-timestamp');
+        $svix_signature = $request->get_header('svix-signature');
+
+        if (!$secret || !$svix_id || !$svix_timestamp || !$svix_signature || abs(time() - (int) $svix_timestamp) > 300) {
+            return new WP_REST_Response(['success' => false, 'message' => 'Invalid webhook signature.'], 401);
+        }
+
+        $secret_bytes = str_starts_with($secret, 'whsec_')
+            ? base64_decode(substr($secret, 6), true)
+            : $secret;
+        $signed = $svix_id . '.' . $svix_timestamp . '.' . $body;
+        $expected = base64_encode(hash_hmac('sha256', $signed, (string) $secret_bytes, true));
+        $valid = false;
+        foreach (preg_split('/\s+/', $svix_signature) as $versioned_signature) {
+            [$version, $signature] = array_pad(explode(',', $versioned_signature, 2), 2, '');
+            if ($version === 'v1' && $signature !== '' && hash_equals($expected, $signature)) {
+                $valid = true;
+                break;
+            }
+        }
+        if (!$valid) {
+            return new WP_REST_Response(['success' => false, 'message' => 'Invalid webhook signature.'], 401);
+        }
+
+        $event = json_decode($body, true);
+        if (!is_array($event) || empty($event['type'])) {
+            return new WP_REST_Response(['success' => false, 'message' => 'Invalid webhook payload.'], 400);
+        }
+
+        $event_id = sanitize_text_field($svix_id);
+        $type = sanitize_text_field($event['type']);
+        $data = is_array($event['data'] ?? null) ? $event['data'] : [];
+
+        if ($type === 'email.received') {
+            $lead_id = self::ingest_received_email($data, $event_id);
+            return new WP_REST_Response(['success' => true, 'lead_id' => $lead_id]);
+        }
+
+        $email_id = sanitize_text_field($data['email_id'] ?? $data['id'] ?? '');
+        if (!$email_id) {
+            return new WP_REST_Response(['success' => true, 'matched' => false]);
+        }
+        $ids = get_posts([
+            'post_type' => 'wkel_lead',
+            'posts_per_page' => 1,
+            'post_status' => 'publish',
+            'meta_query' => [['key' => '_wkel_resend_email_id', 'value' => $email_id]],
+            'fields' => 'ids',
+        ]);
+        if (empty($ids)) {
+            return new WP_REST_Response(['success' => true, 'matched' => false]);
+        }
+
+        $lead_id = (int) $ids[0];
+        $labels = [
+            'email.sent' => ['email_sent', 'Resend accepted the email for sending.'],
+            'email.delivered' => ['email_delivered', 'Resend confirmed delivery of the email.'],
+            'email.delivery_delayed' => ['email_delayed', 'Resend reported a delivery delay.'],
+            'email.failed' => ['email_failed', 'Resend reported that the email failed.'],
+            'email.bounced' => ['email_bounced', 'Resend reported that the email bounced.'],
+            'email.complained' => ['email_complained', 'Resend reported a spam complaint.'],
+            'email.opened' => ['email_opened', 'Recipient opened the email.'],
+            'email.clicked' => ['email_clicked', 'Recipient clicked a link in the email.'],
+            'email.suppressed' => ['email_suppressed', 'Resend suppressed the email.'],
+        ];
+        if (isset($labels[$event['type']])) {
+            [$activity_type, $message] = $labels[$event['type']];
+            WKEL_Submission::log_activity($lead_id, $activity_type, $message, $event_id, !empty($data['created_at']) ? strtotime($data['created_at']) ?: time() : time(), ['resend' => $data]);
+        }
+        if ($type === 'email.delivered') {
+            update_post_meta($lead_id, '_wkel_email_status', 'delivered');
+        } elseif (in_array($type, ['email.failed', 'email.bounced', 'email.complained', 'email.suppressed'], true)) {
+            update_post_meta($lead_id, '_wkel_email_status', 'failed');
+        }
+        return new WP_REST_Response(['success' => true, 'matched' => true, 'lead_id' => $lead_id]);
+    }
+
+    private static function ingest_received_email(array $data, string $event_id): int {
+        $email_id = sanitize_text_field($data['email_id'] ?? $data['id'] ?? '');
+        $content = $email_id ? self::retrieve_received_email($email_id) : [];
+        $email = self::extract_email_address($data['from'] ?? ($content['from'] ?? ''));
+        if (!$email) {
+            return 0;
+        }
+
+        $subject = sanitize_text_field($data['subject'] ?? ($content['subject'] ?? ''));
+        $html = (string) ($content['html'] ?? $content['text'] ?? $data['text'] ?? '');
+        $summary = trim(wp_strip_all_tags($html));
+        $summary = function_exists('mb_substr') ? mb_substr($summary, 0, 1000) : substr($summary, 0, 1000);
+        $message = trim(($subject ? 'Subject: ' . $subject . "\n" : '') . $summary);
+        $lead_id = WKEL_Submission::find_lead_by_email($email);
+
+        if (!$lead_id) {
+            $name = sanitize_text_field($data['from_name'] ?? '');
+            if (!$name && preg_match('/^\s*(.*?)\s*<[^>]+>/', (string) ($data['from'] ?? ''), $matches)) {
+                $name = sanitize_text_field($matches[1]);
+            }
+            $fields = ['wkel_name' => $name ?: $email, 'wkel_email' => $email, 'wkel_organisation' => ''];
+            $lead_type = self::infer_lead_type($subject . ' ' . $summary);
+            $lead_id = WKEL_Submission::create_lead($fields, 'email_inbox', '', 'email', $lead_type);
+            if (is_wp_error($lead_id)) {
+                return 0;
+            }
+            update_post_meta($lead_id, '_wkel_email_status', 'not_sent');
+        }
+
+        WKEL_Submission::log_activity($lead_id, 'email_received', $message ?: 'Inbound email received.', $event_id, !empty($data['created_at']) ? strtotime($data['created_at']) ?: time() : time(), [
+            'email_id' => $email_id,
+            'from' => $email,
+            'message_id' => sanitize_text_field($content['message_id'] ?? $data['message_id'] ?? ''),
+        ]);
+        update_post_meta($lead_id, '_wkel_last_inbound_email_at', time());
+        return (int) $lead_id;
+    }
+
+    private static function retrieve_received_email(string $email_id): array {
+        $api_key = WKEL_Encryption::decrypt(get_option('wkel_resend_key', ''));
+        if (!$api_key) {
+            return [];
+        }
+        $response = wp_remote_get('https://api.resend.com/emails/receiving/' . rawurlencode($email_id), [
+            'headers' => ['Authorization' => 'Bearer ' . $api_key],
+            'timeout' => 15,
+        ]);
+        if (is_wp_error($response) || wp_remote_retrieve_response_code($response) >= 300) {
+            return [];
+        }
+        $body = json_decode(wp_remote_retrieve_body($response), true);
+        return is_array($body) ? $body : [];
+    }
+
+    private static function extract_email_address(string $value): string {
+        if (preg_match('/<([^>]+)>/', $value, $matches)) {
+            $value = $matches[1];
+        }
+        return sanitize_email(trim($value));
+    }
+
+    private static function infer_lead_type(string $text): string {
+        $text = strtolower($text);
+        if (preg_match('/\b(support|helpdesk|technical issue|bug|problem|cannot log in)\b/', $text)) {
+            return 'support';
+        }
+        if (preg_match('/\b(telemarketer|cold call|sales call|telephone marketing)\b/', $text)) {
+            return 'telemarketer';
+        }
+        if (preg_match('/\b(existing client|client request|renewal|change request)\b/', $text)) {
+            return 'client_request';
+        }
+        return 'other';
     }
 }

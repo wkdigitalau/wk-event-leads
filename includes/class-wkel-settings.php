@@ -31,7 +31,8 @@ class WKEL_Settings {
         register_setting('wkel_general', 'wkel_success_message',     ['sanitize_callback' => 'sanitize_text_field']);
 
         // Email
-        register_setting('wkel_email', 'wkel_sendgrid_key',      ['sanitize_callback' => [self::class, 'sanitise_api_key']]);
+        register_setting('wkel_email', 'wkel_resend_key',         ['sanitize_callback' => [self::class, 'sanitise_api_key']]);
+        register_setting('wkel_email', 'wkel_resend_webhook_secret', ['sanitize_callback' => [self::class, 'sanitise_webhook_secret']]);
         register_setting('wkel_email', 'wkel_email_from_name',   ['sanitize_callback' => 'sanitize_text_field']);
         register_setting('wkel_email', 'wkel_email_from_address',['sanitize_callback' => 'sanitize_email']);
         register_setting('wkel_email', 'wkel_email_reply_to',    ['sanitize_callback' => 'sanitize_email']);
@@ -55,7 +56,15 @@ class WKEL_Settings {
         $value = sanitize_text_field($value);
         // If unchanged (displayed as placeholder), keep existing
         if ($value === '••••••••') {
-            return get_option('wkel_sendgrid_key', '');
+            return get_option('wkel_resend_key', '');
+        }
+        return WKEL_Encryption::encrypt($value);
+    }
+
+    public static function sanitise_webhook_secret(string $value): string {
+        $value = sanitize_text_field($value);
+        if ($value === '••••••••') {
+            return get_option('wkel_resend_webhook_secret', '');
         }
         return WKEL_Encryption::encrypt($value);
     }
@@ -152,7 +161,8 @@ class WKEL_Settings {
         ?><form method="post" action="options.php" class="wkel-settings-form"><?php
         settings_fields('wkel_email');
 
-        $has_key = !empty(get_option('wkel_sendgrid_key', ''));
+        $has_key = !empty(get_option('wkel_resend_key', ''));
+        $has_webhook_secret = !empty(get_option('wkel_resend_webhook_secret', ''));
 
         // Handle test email
         $test_result = null;
@@ -170,11 +180,20 @@ class WKEL_Settings {
 
         <table class="form-table">
             <tr>
-                <th><label for="wkel_sendgrid_key"><?php esc_html_e('SendGrid API Key', 'wk-event-leads'); ?></label></th>
+                <th><label for="wkel_resend_key"><?php esc_html_e('Resend API Key', 'wk-event-leads'); ?></label></th>
                 <td>
-                    <input type="password" id="wkel_sendgrid_key" name="wkel_sendgrid_key"
+                    <input type="password" id="wkel_resend_key" name="wkel_resend_key"
                            value="<?php echo $has_key ? '••••••••' : ''; ?>" class="regular-text" autocomplete="new-password">
-                    <p class="description"><?php esc_html_e('Stored encrypted. Leave unchanged to keep existing key.', 'wk-event-leads'); ?></p>
+                    <p class="description"><?php esc_html_e('Resend is the only email provider used by this plugin. Stored encrypted; leave unchanged to keep the existing key.', 'wk-event-leads'); ?></p>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="wkel_resend_webhook_secret"><?php esc_html_e('Resend Webhook Signing Secret', 'wk-event-leads'); ?></label></th>
+                <td>
+                    <input type="password" id="wkel_resend_webhook_secret" name="wkel_resend_webhook_secret"
+                           value="<?php echo $has_webhook_secret ? '••••••••' : ''; ?>" class="regular-text" autocomplete="new-password">
+                    <p class="description"><?php esc_html_e('Optional until the Resend webhook is created. Used to verify delivery events and inbound email notifications.', 'wk-event-leads'); ?></p>
+                    <p class="description"><strong><?php esc_html_e('Webhook URL:', 'wk-event-leads'); ?></strong> <code><?php echo esc_html(rest_url('wk-event-leads/v1/webhooks/resend')); ?></code></p>
                 </td>
             </tr>
             <tr>

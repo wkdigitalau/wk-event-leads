@@ -23,6 +23,69 @@ class WKEL_Schema {
         }
     }
 
+    /**
+     * Add the newer sales stages without deleting or renaming any existing
+     * stages. This keeps support/client-request stages and old lead links safe.
+     */
+    public static function ensure_stage_defaults(): void {
+        $stages = self::get_stages();
+        if (empty($stages)) {
+            return;
+        }
+
+        $existing = array_column($stages, 'id');
+        $new_stages = [
+            ['id' => 'qualified', 'label' => 'Qualified', 'color' => '#0EA5E9', 'locked' => false],
+            ['id' => 'proposal', 'label' => 'Proposal / Scope', 'color' => '#6366F1', 'locked' => false],
+            ['id' => 'nurture', 'label' => 'Nurture / On Hold', 'color' => '#64748B', 'locked' => false],
+        ];
+
+        $changed = false;
+        foreach ($new_stages as $stage) {
+            if (in_array($stage['id'], $existing, true)) {
+                continue;
+            }
+            $stage['order'] = count($stages) + 1;
+            $stages[] = $stage;
+            $changed = true;
+        }
+
+        if ($changed) {
+            // Keep terminal outcomes last while retaining every custom stage.
+            $terminal = [];
+            $normal = [];
+            foreach ($stages as $stage) {
+                if (in_array($stage['id'], ['closed_won', 'closed_lost'], true)) {
+                    $terminal[] = $stage;
+                } else {
+                    $normal[] = $stage;
+                }
+            }
+            $stages = array_merge($normal, $terminal);
+            foreach ($stages as $index => &$stage) {
+                $stage['order'] = $index + 1;
+            }
+            unset($stage);
+            update_option(self::STAGE_OPTION, json_encode($stages), false);
+        }
+    }
+
+    public static function lead_types(): array {
+        return [
+            'sales' => 'Sales enquiry',
+            'support' => 'Support',
+            'client_request' => 'Client request',
+            'telemarketer' => 'Telemarketer',
+            'partner' => 'Partner / referral',
+            'other' => 'Other',
+        ];
+    }
+
+    public static function sanitise_lead_type(string $type): string {
+        $type = sanitize_key($type);
+        return array_key_exists($type, self::lead_types()) ? $type : 'other';
+    }
+
     // -------------------------------------------------------------------------
     // Field Schema — CRUD
     // -------------------------------------------------------------------------
@@ -329,9 +392,12 @@ class WKEL_Schema {
             ['id' => 'new',             'label' => 'New',             'color' => '#6B7280', 'order' => 1, 'locked' => true],
             ['id' => 'contacted',       'label' => 'Contacted',       'color' => '#3B82F6', 'order' => 2, 'locked' => false],
             ['id' => 'in_conversation', 'label' => 'In Conversation', 'color' => '#F59E0B', 'order' => 3, 'locked' => false],
-            ['id' => 'meeting_booked',  'label' => 'Meeting Booked',  'color' => '#8B5CF6', 'order' => 4, 'locked' => false],
-            ['id' => 'closed_won',      'label' => 'Closed Won',      'color' => '#10B981', 'order' => 5, 'locked' => false],
-            ['id' => 'closed_lost',     'label' => 'Closed Lost',     'color' => '#EF4444', 'order' => 6, 'locked' => false],
+            ['id' => 'qualified',       'label' => 'Qualified',       'color' => '#0EA5E9', 'order' => 5, 'locked' => false],
+            ['id' => 'meeting_booked',  'label' => 'Meeting Booked',  'color' => '#8B5CF6', 'order' => 6, 'locked' => false],
+            ['id' => 'proposal',        'label' => 'Proposal / Scope', 'color' => '#6366F1', 'order' => 7, 'locked' => false],
+            ['id' => 'nurture',         'label' => 'Nurture / On Hold', 'color' => '#64748B', 'order' => 8, 'locked' => false],
+            ['id' => 'closed_won',      'label' => 'Closed Won',      'color' => '#10B981', 'order' => 9, 'locked' => false],
+            ['id' => 'closed_lost',     'label' => 'Closed Lost',     'color' => '#EF4444', 'order' => 10, 'locked' => false],
         ];
     }
 }

@@ -11,6 +11,30 @@ class WKEL_Submission {
             'args'                => [],
         ]);
 
+        // Signed Resend delivery/inbound event receiver.
+        register_rest_route('wk-event-leads/v1', '/webhooks/resend', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [self::class, 'resend_webhook'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        // Narrow service API for Clippy or another trusted automation container.
+        register_rest_route('wk-event-leads/v1', '/leads', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [self::class, 'list_leads'],
+            'permission_callback' => [self::class, 'bot_permission'],
+        ]);
+        register_rest_route('wk-event-leads/v1', '/leads/upsert', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [self::class, 'upsert_lead'],
+            'permission_callback' => [self::class, 'bot_permission'],
+        ]);
+        register_rest_route('wk-event-leads/v1', '/lead/(?P<id>\d+)/activities', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [self::class, 'add_activity'],
+            'permission_callback' => [self::class, 'bot_permission'],
+        ]);
+
         // Stage update endpoint (used by kanban drag-drop)
         register_rest_route('wk-event-leads/v1', '/lead/(?P<id>\d+)/stage', [
             'methods'             => WP_REST_Server::EDITABLE,
@@ -51,6 +75,20 @@ class WKEL_Submission {
 
     public static function admin_permission(): bool {
         return current_user_can('manage_options');
+    }
+
+    public static function bot_permission(WP_REST_Request $request): bool {
+        if (self::admin_permission()) {
+            return true;
+        }
+
+        $configured = defined('WKEL_BOT_API_KEY') ? WKEL_BOT_API_KEY : '';
+        $provided   = $request->get_header('x-wkel-api-key');
+        return $configured !== '' && $provided !== '' && hash_equals((string) $configured, (string) $provided);
+    }
+
+    public static function resend_webhook(WP_REST_Request $request): WP_REST_Response {
+        return WKEL_Email::handle_webhook($request);
     }
 
     // -------------------------------------------------------------------------
@@ -118,7 +156,8 @@ class WKEL_Submission {
         }
 
         // Create lead
-        $lead_id = self::create_lead($sanitised, $event, $ip, $admin_submit ? 'admin' : 'direct');
+        $lead_type = WKEL_Schema::sanitise_lead_type($body['lead_type'] ?? $body['request_type'] ?? 'sales');
+        $lead_id = self::create_lead($sanitised, $event, $ip, $admin_submit ? 'admin' : 'direct', $lead_type);
 
         if (is_wp_error($lead_id)) {
             return new WP_REST_Response(['success' => false, 'message' => __('Could not save your submission. Please try again.', 'wk-event-leads')], 500);
@@ -168,7 +207,7 @@ class WKEL_Submission {
         return !empty($existing);
     }
 
-    public static function create_lead(array $sanitised, string $event, string $ip, string $source = 'direct'): int|WP_Error {
+    public static function create_lead(array $sanitised, string $event, string $ip, string $source = 'direct', string $lead_type = 'sales'): int|WP_Error {
         // Determine organisation for post title
         $org = '';
         foreach (WKEL_Schema::get_fields() as $field) {
@@ -226,6 +265,7 @@ class WKEL_Submission {
             '_wkel_privacy_accepted'=> '1',
             '_wkel_submitted_at'    => time(),
             '_wkel_source'          => sanitize_key($source),
+            '_wkel_lead_type'       => WKEL_Schema::sanitise_lead_type($lead_type),
         ];
 
         foreach ($system_meta as $key => $value) {
@@ -323,7 +363,30 @@ class WKEL_Submission {
 
         // Admin notes
         if (array_key_exists('admin_notes', $body)) {
-            update_post_meta($lead_id, '_wkel_admin_notes', sanitize_textarea_field($body['admin_notes']));
+            $notes = sanitize_textarea_field($body['admin_notes']);
+            $old_notes = get_post_meta($lead_id, '_wkel_admin_notes', true);
+            update_post_meta($lead_id, '_wkel_admin_notes', $notes);
+            if ($notes !== $old_notes && $notes !== '') {
+                self::log_activity($lead_id, 'note_added', 'Admin note added.');
+            }
+        }
+
+        if (array_key_exists('lead_type', $body) || array_key_exists('request_type', $body)) {
+            $new_type = WKEL_Schema::sanitise_lead_type($body['lead_type'] ?? $body['request_type']);
+            $old_type = get_post_meta($lead_id, '_wkel_lead_type', true) ?: 'sales';
+            if ($new_type !== $old_type) {
+                update_post_meta($lead_id, '_wkel_lead_type', $new_type);
+                self::log_activity($lead_id, 'lead_type_changed', "Lead type changed from {$old_type} to {$new_type}.");
+            }
+        }
+
+        foreach (['service_interest', 'owner', 'priority', 'loss_reason', 'next_action'] as $meta_key) {
+            if (array_key_exists($meta_key, $body)) {
+                update_post_meta($lead_id, '_wkel_' . $meta_key, sanitize_text_field($body[$meta_key]));
+            }
+        }
+        if (array_key_exists('next_action_at', $body)) {
+            update_post_meta($lead_id, '_wkel_next_action_at', sanitize_text_field($body['next_action_at']));
         }
 
         return new WP_REST_Response(['success' => true]);
@@ -374,14 +437,153 @@ class WKEL_Submission {
     // Activity log
     // -------------------------------------------------------------------------
 
-    public static function log_activity(int $lead_id, string $type, string $message): void {
+    public static function log_activity(int $lead_id, string $type, string $message, ?string $external_id = null, ?int $occurred_at = null, array $metadata = []): void {
         $log   = get_post_meta($lead_id, '_wkel_activity_log', true);
         $log   = $log ? json_decode($log, true) : [];
+        if (!is_array($log)) {
+            $log = [];
+        }
+        if ($external_id) {
+            foreach ($log as $entry) {
+                if (($entry['external_id'] ?? '') === $external_id) {
+                    return;
+                }
+            }
+        }
+        $timestamp = $occurred_at ?: time();
         $log[] = [
+            'id'      => function_exists('wp_generate_uuid4') ? wp_generate_uuid4() : uniqid('wkel_', true),
             'type'    => $type,
             'message' => $message,
-            'at'      => time(),
+            'at'      => $timestamp,
+            'occurred_at' => $timestamp,
+            'recorded_at' => time(),
+            'external_id' => $external_id,
+            'metadata' => $metadata,
         ];
+        usort($log, fn($a, $b) => (int) ($a['occurred_at'] ?? $a['at'] ?? 0) <=> (int) ($b['occurred_at'] ?? $b['at'] ?? 0));
         update_post_meta($lead_id, '_wkel_activity_log', json_encode($log));
+    }
+
+    public static function find_lead_by_email(string $email): int {
+        $email = strtolower(trim($email));
+        if (!is_email($email)) {
+            return 0;
+        }
+        $ids = get_posts([
+            'post_type' => 'wkel_lead',
+            'posts_per_page' => 1,
+            'post_status' => 'publish',
+            'meta_query' => [['key' => '_wkel_email_hash', 'value' => hash('sha256', $email)]],
+            'fields' => 'ids',
+        ]);
+        return !empty($ids) ? (int) $ids[0] : 0;
+    }
+
+    public static function add_activity(WP_REST_Request $request): WP_REST_Response {
+        $lead_id = (int) $request['id'];
+        if (get_post_type($lead_id) !== 'wkel_lead') {
+            return new WP_REST_Response(['success' => false, 'message' => 'Lead not found.'], 404);
+        }
+        $body = $request->get_json_params();
+        $type = sanitize_key($body['type'] ?? 'note');
+        $message = sanitize_textarea_field($body['message'] ?? $body['summary'] ?? '');
+        if ($message === '') {
+            return new WP_REST_Response(['success' => false, 'message' => 'Activity message is required.'], 422);
+        }
+        self::log_activity(
+            $lead_id,
+            $type,
+            $message,
+            !empty($body['external_id']) ? sanitize_text_field($body['external_id']) : null,
+            !empty($body['occurred_at']) ? strtotime($body['occurred_at']) ?: time() : time(),
+            is_array($body['metadata'] ?? null) ? $body['metadata'] : []
+        );
+        return new WP_REST_Response(['success' => true, 'lead' => WKEL_Pipeline::get_lead_detail($lead_id)]);
+    }
+
+    public static function list_leads(WP_REST_Request $request): WP_REST_Response {
+        $limit = min(100, max(1, (int) ($request->get_param('limit') ?: 50)));
+        $meta_query = [];
+        if ($request->get_param('stage')) {
+            $meta_query[] = ['key' => '_wkel_stage', 'value' => sanitize_key($request->get_param('stage'))];
+        }
+        if ($request->get_param('lead_type')) {
+            $meta_query[] = ['key' => '_wkel_lead_type', 'value' => WKEL_Schema::sanitise_lead_type($request->get_param('lead_type'))];
+        }
+        $args = ['post_type' => 'wkel_lead', 'post_status' => 'publish', 'posts_per_page' => $limit, 'orderby' => 'date', 'order' => 'DESC'];
+        if ($meta_query) {
+            $meta_query['relation'] = 'AND';
+            $args['meta_query'] = $meta_query;
+        }
+        $search = strtolower(sanitize_text_field($request->get_param('search') ?: ''));
+        $items = [];
+        foreach (get_posts($args) as $post) {
+            $card = WKEL_Pipeline::build_card($post, WKEL_Schema::get_fields());
+            if ($search && !str_contains(strtolower($card['name'] . ' ' . $card['organisation'] . ' ' . $card['event']), $search)) {
+                continue;
+            }
+            $items[] = $card;
+        }
+        return new WP_REST_Response(['success' => true, 'count' => count($items), 'leads' => $items]);
+    }
+
+    public static function upsert_lead(WP_REST_Request $request): WP_REST_Response {
+        $body = $request->get_json_params();
+        $email = sanitize_email($body['email'] ?? '');
+        if (!$email || !is_email($email)) {
+            return new WP_REST_Response(['success' => false, 'message' => 'A valid email is required.'], 422);
+        }
+
+        $lead_id = self::find_lead_by_email($email);
+        $created = false;
+        $fields = [];
+        foreach (WKEL_Schema::get_fields() as $field) {
+            $id = $field['id'];
+            if ($id === 'wkel_email') {
+                $fields[$id] = $email;
+            } elseif ($id === 'wkel_name') {
+                $fields[$id] = sanitize_text_field($body['name'] ?? $body['full_name'] ?? '');
+            } elseif ($id === 'wkel_organisation') {
+                $fields[$id] = sanitize_text_field($body['organisation'] ?? '');
+            } elseif (array_key_exists($id, $body)) {
+                $fields[$id] = WKEL_Security::sanitise_by_type((string) $body[$id], $field['type']);
+            }
+        }
+
+        if (!$lead_id) {
+            $lead_id = self::create_lead($fields, sanitize_key($body['event'] ?? 'email_inbox'), '', sanitize_key($body['source'] ?? 'clippy'), WKEL_Schema::sanitise_lead_type($body['lead_type'] ?? $body['request_type'] ?? 'other'));
+            if (is_wp_error($lead_id)) {
+                return new WP_REST_Response(['success' => false, 'message' => $lead_id->get_error_message()], 500);
+            }
+            $created = true;
+            update_post_meta($lead_id, '_wkel_email_status', 'not_sent');
+        } else {
+            foreach (WKEL_Schema::get_fields() as $field) {
+                if (!array_key_exists($field['id'], $fields)) {
+                    continue;
+                }
+                $value = !empty($field['encrypted']) ? WKEL_Encryption::encrypt($fields[$field['id']]) : $fields[$field['id']];
+                update_post_meta($lead_id, '_wkel_' . $field['id'], $value);
+            }
+            if (!empty($body['lead_type']) || !empty($body['request_type'])) {
+                update_post_meta($lead_id, '_wkel_lead_type', WKEL_Schema::sanitise_lead_type($body['lead_type'] ?? $body['request_type']));
+            }
+        }
+
+        foreach (['service_interest', 'owner', 'priority', 'loss_reason', 'next_action', 'next_action_at'] as $meta_key) {
+            if (array_key_exists($meta_key, $body)) {
+                update_post_meta($lead_id, '_wkel_' . $meta_key, sanitize_text_field($body[$meta_key]));
+            }
+        }
+
+        if (!empty($body['summary']) || !empty($body['activity'])) {
+            $activity = $body['summary'] ?? $body['activity'];
+            if (is_array($activity)) {
+                $activity = $activity['summary'] ?? wp_json_encode($activity);
+            }
+            self::log_activity($lead_id, 'external_update', sanitize_textarea_field((string) $activity), !empty($body['external_id']) ? sanitize_text_field($body['external_id']) : null, time(), is_array($body['metadata'] ?? null) ? $body['metadata'] : []);
+        }
+        return new WP_REST_Response(['success' => true, 'created' => $created, 'lead' => WKEL_Pipeline::get_lead_detail($lead_id)], $created ? 201 : 200);
     }
 }

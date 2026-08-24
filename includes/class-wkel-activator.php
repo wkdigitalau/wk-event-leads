@@ -31,7 +31,8 @@ class WKEL_Activator {
         add_option('wkel_sender_name', '');
         add_option('wkel_sender_phone', '');
         add_option('wkel_sender_email', '');
-        add_option('wkel_sendgrid_key', '');
+        add_option('wkel_resend_key', '');
+        add_option('wkel_resend_webhook_secret', '');
         add_option('wkel_atncs_url', '');
         add_option('wkel_enp_url', '');
         add_option('wkel_event_map', json_encode([['slug' => 'general', 'name' => 'General']]));

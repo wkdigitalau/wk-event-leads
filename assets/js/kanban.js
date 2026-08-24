@@ -113,6 +113,7 @@
         // Meta section
         html += '<div class="wkel-detail-meta">'
             + '<div><strong>Stage:</strong> ' + esc(lead.stage_label) + '</div>'
+            + '<div><strong>Type:</strong> ' + esc((lead.lead_type || 'sales').replace(/_/g, ' ')) + '</div>'
             + '<div><strong>Email:</strong> ' + esc(lead.email_status) + (lead.email_sent_at ? ' — ' + formatDate(lead.email_sent_at) : '') + '</div>'
             + '<div><strong>Event:</strong> ' + esc(lead.event) + '</div>'
             + '<div><strong>Campaign:</strong> ' + esc(lead.campaign || '—') + '</div>'
@@ -128,6 +129,23 @@
             html += '<option value="' + esc(s.id) + '"' + (s.id === lead.stage ? ' selected' : '') + '>' + esc(s.label) + '</option>';
         });
         html += '</select></div>';
+
+        // Classification is separate from the sales pipeline so support,
+        // client-request and telemarketer records remain trackable without
+        // being forced through sales stages.
+        html += '<div class="wkel-detail-field"><label>Lead Type</label>'
+            + '<select name="lead_type" data-lead-id="' + lead.id + '" class="wkel-detail-input">'
+            + '<option value="sales"' + (lead.lead_type === 'sales' ? ' selected' : '') + '>Sales enquiry</option>'
+            + '<option value="support"' + (lead.lead_type === 'support' ? ' selected' : '') + '>Support</option>'
+            + '<option value="client_request"' + (lead.lead_type === 'client_request' ? ' selected' : '') + '>Client request</option>'
+            + '<option value="telemarketer"' + (lead.lead_type === 'telemarketer' ? ' selected' : '') + '>Telemarketer</option>'
+            + '<option value="partner"' + (lead.lead_type === 'partner' ? ' selected' : '') + '>Partner / referral</option>'
+            + '<option value="other"' + (lead.lead_type === 'other' ? ' selected' : '') + '>Other</option>'
+            + '</select></div>';
+
+        html += '<div class="wkel-detail-field"><label>Next Action</label>'
+            + '<input type="text" name="next_action" value="' + esc(lead.next_action || '') + '" data-lead-id="' + lead.id + '" class="wkel-detail-input">'
+            + '</div>';
 
         // Schema fields
         lead.fields.forEach(function (field) {
@@ -149,6 +167,12 @@
         // Admin notes
         html += '<div class="wkel-detail-field"><label>Admin Notes (private)</label>'
             + '<textarea name="admin_notes" data-lead-id="' + lead.id + '" class="wkel-detail-input" rows="3">' + esc(lead.admin_notes || '') + '</textarea>'
+            + '</div>';
+
+        html += '<div class="wkel-detail-field"><label>Log Activity</label>'
+            + '<select id="wkel-activity-type"><option value="note">Note</option><option value="email_received">Email received</option><option value="call">Phone call</option><option value="meeting">Meeting</option><option value="task">Task</option></select>'
+            + '<textarea id="wkel-activity-message" rows="2" placeholder="What happened?"></textarea>'
+            + '<button class="button" id="wkel-activity-add" data-lead-id="' + lead.id + '">Add Activity</button>'
             + '</div>';
 
         // Actions
@@ -315,6 +339,21 @@
                     }
                 }
                 alert(message);
+            });
+        });
+
+        document.getElementById('wkel-activity-add').addEventListener('click', function () {
+            const id = parseInt(this.dataset.leadId, 10);
+            const message = document.getElementById('wkel-activity-message').value.trim();
+            if (!message) return;
+            apiFetch('lead/' + id + '/activities', 'POST', {
+                type: document.getElementById('wkel-activity-type').value,
+                message: message,
+            }).then(function () {
+                showDetailNotice(container, 'Activity added.', 'success');
+                openDetailPanel(id);
+            }).catch(function () {
+                showDetailNotice(container, 'Activity could not be added.', 'error');
             });
         });
     }

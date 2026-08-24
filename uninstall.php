@@ -22,6 +22,8 @@ $options = [
     'wkel_honeypot_enabled',
     'wkel_data_retention_days',
     'wkel_sendgrid_key',
+    'wkel_resend_key',
+    'wkel_resend_webhook_secret',
     'wkel_email_from_name',
     'wkel_email_from_address',
     'wkel_email_reply_to',

@@ -82,6 +82,7 @@ class WKEL_Pipeline {
             'email_status' => get_post_meta($post->ID, '_wkel_email_status', true),
             'submitted_at' => (int) get_post_meta($post->ID, '_wkel_submitted_at', true),
             'event'        => get_post_meta($post->ID, '_wkel_event', true),
+            'lead_type'    => get_post_meta($post->ID, '_wkel_lead_type', true) ?: 'sales',
             'campaign'     => get_post_meta($post->ID, '_wkel_campaign', true),
             'list_type'    => get_post_meta($post->ID, '_wkel_list_type', true),
             'marketing_status' => get_post_meta($post->ID, '_wkel_marketing_status', true) ?: 'subscribed',
@@ -107,6 +108,12 @@ class WKEL_Pipeline {
                 ];
             }
         }
+
+        $lead_type = get_post_meta($post->ID, '_wkel_lead_type', true) ?: 'sales';
+        $card['extra_fields'][] = [
+            'label' => 'Type',
+            'value' => ucwords(str_replace('_', ' ', $lead_type)),
+        ];
 
         $card = apply_filters('wkel_kanban_card_data', $card, $post->ID);
 
@@ -151,12 +158,19 @@ class WKEL_Pipeline {
             'email_status' => get_post_meta($lead_id, '_wkel_email_status', true),
             'email_sent_at'=> (int) get_post_meta($lead_id, '_wkel_email_sent_at', true),
             'event'        => get_post_meta($lead_id, '_wkel_event', true),
+            'lead_type'    => get_post_meta($lead_id, '_wkel_lead_type', true) ?: 'sales',
             'campaign'     => get_post_meta($lead_id, '_wkel_campaign', true),
             'list_type'    => get_post_meta($lead_id, '_wkel_list_type', true),
             'marketing_status' => get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'subscribed',
             'unsubscribed_at' => (int) get_post_meta($lead_id, '_wkel_unsubscribed_at', true),
             'submitted_at' => (int) get_post_meta($lead_id, '_wkel_submitted_at', true),
             'admin_notes'  => get_post_meta($lead_id, '_wkel_admin_notes', true),
+            'service_interest' => get_post_meta($lead_id, '_wkel_service_interest', true),
+            'owner'        => get_post_meta($lead_id, '_wkel_owner', true),
+            'priority'     => get_post_meta($lead_id, '_wkel_priority', true),
+            'next_action'  => get_post_meta($lead_id, '_wkel_next_action', true),
+            'next_action_at' => get_post_meta($lead_id, '_wkel_next_action_at', true),
+            'loss_reason'  => get_post_meta($lead_id, '_wkel_loss_reason', true),
             'activity_log' => $activity,
         ];
     }

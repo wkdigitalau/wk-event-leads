@@ -41,6 +41,7 @@ class WKEL_Loader {
     private function define_hooks(): void {
         // CPT
         $this->add_action('init', 'WKEL_CPT', 'register');
+        $this->add_action('init', 'WKEL_Schema', 'ensure_stage_defaults', 5, 0);
 
         // Form shortcode
         $this->add_action('init', 'WKEL_Form', 'register_shortcode');
