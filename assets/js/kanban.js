@@ -172,7 +172,7 @@
         html += '<div class="wkel-detail-field"><label>Log Activity</label>'
             + '<select id="wkel-activity-type"><option value="note">Note</option><option value="email_received">Email received</option><option value="call">Phone call</option><option value="meeting">Meeting</option><option value="task">Task</option></select>'
             + '<textarea id="wkel-activity-message" rows="2" placeholder="What happened?"></textarea>'
-            + '<button class="button" id="wkel-activity-add" data-lead-id="' + lead.id + '">Add Activity</button>'
+            + '<button type="button" class="button" id="wkel-activity-add" data-lead-id="' + lead.id + '">Add Activity</button>'
             + '</div>';
 
         // Actions
@@ -342,20 +342,31 @@
             });
         });
 
+        // Add a chronological activity to this lead.
         document.getElementById('wkel-activity-add').addEventListener('click', function () {
             const id = parseInt(this.dataset.leadId, 10);
             const message = document.getElementById('wkel-activity-message').value.trim();
-            if (!message) return;
+            if (!message) {
+                showDetailNotice(container, 'Enter an activity description first.', 'error');
+                return;
+            }
+            const button = this;
+            button.disabled = true;
             apiFetch('lead/' + id + '/activities', 'POST', {
                 type: document.getElementById('wkel-activity-type').value,
                 message: message,
-            }).then(function () {
+            }).then(async function (res) {
+                if (!res.ok) {
+                    throw new Error('Activity could not be saved.');
+                }
                 showDetailNotice(container, 'Activity added.', 'success');
                 openDetailPanel(id);
             }).catch(function () {
-                showDetailNotice(container, 'Activity could not be added.', 'error');
+                showDetailNotice(container, 'Activity could not be saved.', 'error');
+                button.disabled = false;
             });
         });
+
     }
 
     function buildAddLeadForm() {

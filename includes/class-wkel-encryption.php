@@ -50,21 +50,31 @@ class WKEL_Encryption {
             return $ciphertext;
         }
 
-        $decoded = base64_decode(substr($ciphertext, strlen(self::PREFIX)));
+        // Older admin saves could encrypt an already encrypted value. Unwrap
+        // a small, bounded number of layers while preserving normal values.
+        $value = $ciphertext;
+        for ($layer = 0; $layer < 3 && self::is_encrypted($value); $layer++) {
+            $decoded = base64_decode(substr($value, strlen(self::PREFIX)));
 
-        if ($decoded === false) {
-            return '';
+            if ($decoded === false) {
+                return '';
+            }
+
+            $decrypted = openssl_decrypt(
+                $decoded,
+                'AES-256-CBC',
+                $key,
+                0,
+                $iv
+            );
+
+            if ($decrypted === false) {
+                return '';
+            }
+            $value = $decrypted;
         }
 
-        $decrypted = openssl_decrypt(
-            $decoded,
-            'AES-256-CBC',
-            $key,
-            0,
-            $iv
-        );
-
-        return $decrypted !== false ? $decrypted : '';
+        return $value;
     }
 
     public static function is_encrypted(string $value): bool {
