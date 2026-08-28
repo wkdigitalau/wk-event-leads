@@ -24,6 +24,7 @@ class WKEL_Loader {
             'class-wkel-submission.php',
             'class-wkel-email.php',
             'class-wkel-campaign.php',
+            'class-wkel-enp-review.php',
             'class-wkel-pipeline.php',
             'class-wkel-admin.php',
             'class-wkel-settings.php',
@@ -56,6 +57,7 @@ class WKEL_Loader {
         // Cold outreach campaign tracking and public opt-out
         $this->add_action('init', 'WKEL_Campaign', 'add_rewrite_rules');
         $this->add_action('template_redirect', 'WKEL_Campaign', 'maybe_render_unsubscribe_page');
+        $this->add_action('template_redirect', 'WKEL_ENP_Review', 'maybe_render', 0, 0);
         $this->add_action('admin_post_wkel_import_campaign_contacts', 'WKEL_Campaign', 'handle_import');
         $this->add_action('admin_post_wkel_export_suppression_csv', 'WKEL_Campaign', 'export_suppression_csv');
 
