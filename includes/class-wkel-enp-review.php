@@ -40,7 +40,19 @@ class WKEL_ENP_Review {
             return;
         }
 
-        $relative_key = strtolower($relative);
+        // Nginx handles requests ending in .css before WordPress on this host.
+        // Serve review styles through the working /ENP/ page route instead.
+        $asset = isset($_GET['asset'])
+            ? sanitize_key(wp_unslash($_GET['asset']))
+            : '';
+        $asset_files = [
+            'styles'       => 'styles.css',
+            'review-pages' => 'review-pages.css',
+        ];
+
+        $relative_key = isset($asset_files[$asset])
+            ? $asset_files[$asset]
+            : strtolower($relative);
         if (!array_key_exists($relative_key, self::FILES)) {
             status_header(404);
             nocache_headers();
