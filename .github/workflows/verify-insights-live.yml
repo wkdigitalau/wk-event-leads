@@ -20,13 +20,20 @@ jobs:
           key: ${{ secrets.VULTR_SSH_KEY }}
           script: |
             set -eu
-            WP_CONFIG="/var/www/wkdigital.com.au/wp-config.php"
+            WP_ROOT="/var/www/wkdigital.com.au"
+            WP_CONFIG="$WP_ROOT/wp-config.php"
             CONFIG_FILE="/var/lib/wk-digital-insights/wp-config-insights.php"
             CRED_PATH="/var/lib/wk-digital-insights/google-readonly.json"
             test -f "$WP_CONFIG" && echo "wp-config.php=present"
             test -f "$CONFIG_FILE" && echo "insights-config=present"
             test -f "$CRED_PATH" && echo "credentials-file=present"
+            grep -nE "wp-config-insights|wp-settings.php" "$WP_CONFIG" || true
             grep -Fq "$CONFIG_FILE" "$WP_CONFIG" && echo "include=present" || echo "include=missing"
             php -l "$WP_CONFIG" >/dev/null && echo "wp-config-php=valid"
             php -l "$CONFIG_FILE" >/dev/null && echo "insights-config-php=valid"
-            php -r 'include $argv[1]; echo "ga4-constant=" . (defined("WKEL_GA4_PROPERTY_ID") ? "defined" : "missing") . PHP_EOL; echo "search-console-constant=" . (defined("WKEL_SEARCH_CONSOLE_SITE_URL") ? "defined" : "missing") . PHP_EOL; echo "service-account-constant=" . (defined("WKEL_GOOGLE_SERVICE_ACCOUNT_JSON") ? "defined" : "missing") . PHP_EOL;' "$CONFIG_FILE"
+            php -r 'include $argv[1]; echo "file-ga4=" . (defined("WKEL_GA4_PROPERTY_ID") ? "defined" : "missing") . PHP_EOL; echo "file-search-console=" . (defined("WKEL_SEARCH_CONSOLE_SITE_URL") ? "defined" : "missing") . PHP_EOL; echo "file-service-account=" . (defined("WKEL_GOOGLE_SERVICE_ACCOUNT_JSON") ? "defined" : "missing") . PHP_EOL;' "$CONFIG_FILE"
+            if command -v wp >/dev/null 2>&1; then
+              wp eval 'echo "wp-ga4=" . (defined("WKEL_GA4_PROPERTY_ID") ? "defined" : "missing") . PHP_EOL; echo "wp-search-console=" . (defined("WKEL_SEARCH_CONSOLE_SITE_URL") ? "defined" : "missing") . PHP_EOL; echo "wp-service-account=" . (defined("WKEL_GOOGLE_SERVICE_ACCOUNT_JSON") ? "defined" : "missing") . PHP_EOL;' --path="$WP_ROOT" --allow-root --skip-plugins --skip-themes
+            else
+              echo "wp-cli=unavailable"
+            fi
