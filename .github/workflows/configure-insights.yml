@@ -2,7 +2,7 @@ name: Configure WK Digital Insights credentials
 
 on:
   workflow_run:
-    workflows: ["Deploy to connect.digitalp.com.au"]
+    workflows: ["Deploy to wkdigital.com.au"]
     types: [completed]
 
 permissions:
@@ -28,7 +28,7 @@ jobs:
 
             TARGET_DIR="/var/lib/wk-digital-insights"
             CRED_PATH="$TARGET_DIR/google-readonly.json"
-            WP_CONFIG="/var/www/connect.digitalp.com.au/wp-config.php"
+            WP_CONFIG="/var/www/wkdigital.com.au/wp-config.php"
             CONFIG_FILE="$TARGET_DIR/wp-config-insights.php"
             CONFIG_INCLUDE="require_once '$CONFIG_FILE';"
 
