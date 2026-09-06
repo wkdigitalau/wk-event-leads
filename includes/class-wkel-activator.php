@@ -88,3 +88,4 @@ class WKEL_Activator {
 <p style="font-size:12px;color:#6b7280;">You can opt out of future marketing emails here: <a href="{{unsubscribe_url}}">{{unsubscribe_url}}</a></p>';
     }
 }
+
