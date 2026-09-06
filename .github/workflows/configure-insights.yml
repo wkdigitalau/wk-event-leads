@@ -1,0 +1,64 @@
+name: Configure WK Digital Insights credentials
+
+on:
+  workflow_run:
+    workflows: ["Deploy to connect.digitalp.com.au"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install read-only Google credentials
+        uses: appleboy/ssh-action@v1
+        env:
+          WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
+        with:
+          host: 149.28.165.62
+          username: root
+          key: ${{ secrets.VULTR_SSH_KEY }}
+          envs: WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64
+          script: |
+            set -eu
+            test -n "$WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64"
+
+            TARGET_DIR="/var/lib/wk-digital-insights"
+            CRED_PATH="$TARGET_DIR/google-readonly.json"
+            WP_CONFIG="/var/www/connect.digitalp.com.au/wp-config.php"
+            CONFIG_FILE="$TARGET_DIR/wp-config-insights.php"
+            CONFIG_INCLUDE="require_once '$CONFIG_FILE';"
+
+            mkdir -p "$TARGET_DIR"
+            umask 077
+            printf '%s' "$WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64" | base64 --decode > "$CRED_PATH"
+            python3 -c 'import json,sys; json.load(open(sys.argv[1]));' "$CRED_PATH"
+            chown www-data:www-data "$CRED_PATH"
+            chmod 600 "$CRED_PATH"
+
+            printf '%s\n' \
+              '<?php' \
+              "if (!defined('WKEL_GA4_PROPERTY_ID')) define('WKEL_GA4_PROPERTY_ID', '356866720');" \
+              "if (!defined('WKEL_SEARCH_CONSOLE_SITE_URL')) define('WKEL_SEARCH_CONSOLE_SITE_URL', 'https://wkdigital.com.au/');" \
+              "if (!defined('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON')) define('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON', '$CRED_PATH');" \
+              > "$CONFIG_FILE"
+            chown root:www-data "$CONFIG_FILE"
+            chmod 640 "$CONFIG_FILE"
+
+            test -f "$WP_CONFIG"
+            if ! grep -Fq "$CONFIG_INCLUDE" "$WP_CONFIG"; then
+              cp "$WP_CONFIG" "$WP_CONFIG.bak.wkel-insights"
+              awk -v line="$CONFIG_INCLUDE" '
+                index($0, "wp-settings.php") && !done { print line; done=1 }
+                { print }
+                END { if (!done) print line }
+              ' "$WP_CONFIG" > "$WP_CONFIG.tmp"
+              mv "$WP_CONFIG.tmp" "$WP_CONFIG"
+              chown www-data:www-data "$WP_CONFIG"
+              chmod 640 "$WP_CONFIG"
+            fi
+
+            echo "WK Digital Insights credentials configured"
