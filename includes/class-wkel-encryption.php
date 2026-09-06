@@ -119,3 +119,4 @@ class WKEL_Encryption {
         return $decoded === false ? null : $decoded;
     }
 }
+

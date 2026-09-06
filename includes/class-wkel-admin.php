@@ -36,7 +36,7 @@ class WKEL_Admin {
     }
 
     public static function enqueue_assets(string $hook): void {
-        $admin_pages = ['toplevel_page_wkel_leads', 'event-leads_page_wkel_all_leads', 'event-leads_page_wkel_campaigns'];
+        $admin_pages = ['toplevel_page_wkel_leads', 'event-leads_page_wkel_all_leads', 'event-leads_page_wkel_campaigns', 'event-leads_page_wkel_insights'];
 
         if (!in_array($hook, $admin_pages, true)) {
             return;
@@ -505,3 +505,4 @@ add_action('admin_post_wkel_export_csv', function () {
     require_once WKEL_PLUGIN_DIR . 'includes/class-wkel-export.php';
     WKEL_Export::output_csv($_GET);
 });
+

@@ -24,9 +24,9 @@ class WKEL_Loader {
             'class-wkel-submission.php',
             'class-wkel-email.php',
             'class-wkel-campaign.php',
-            'class-wkel-enp-review.php',
             'class-wkel-pipeline.php',
             'class-wkel-admin.php',
+			'class-wkel-insights.php',
             'class-wkel-settings.php',
             'class-wkel-export.php',
         ];
@@ -57,13 +57,13 @@ class WKEL_Loader {
         // Cold outreach campaign tracking and public opt-out
         $this->add_action('init', 'WKEL_Campaign', 'add_rewrite_rules');
         $this->add_action('template_redirect', 'WKEL_Campaign', 'maybe_render_unsubscribe_page');
-        $this->add_action('template_redirect', 'WKEL_ENP_Review', 'maybe_render', 0, 0);
         $this->add_action('admin_post_wkel_import_campaign_contacts', 'WKEL_Campaign', 'handle_import');
         $this->add_action('admin_post_wkel_export_suppression_csv', 'WKEL_Campaign', 'export_suppression_csv');
 
         // Admin
         if (is_admin()) {
             $this->add_action('admin_menu', 'WKEL_Admin', 'register_menu');
+			$this->add_action('admin_menu', 'WKEL_Insights', 'register_menu');
             $this->add_action('admin_menu', 'WKEL_Campaign', 'register_admin_menu');
             $this->add_action('admin_enqueue_scripts', 'WKEL_Admin', 'enqueue_assets');
             $this->add_action('admin_menu', 'WKEL_Settings', 'register_menu');
@@ -143,3 +143,4 @@ interface WKEL_Module_Interface {
     public function get_version(): string;
     public function init(): void;
 }
+
