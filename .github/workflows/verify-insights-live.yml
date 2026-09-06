@@ -1,0 +1,32 @@
+name: Verify WK Digital Insights configuration
+
+on:
+  push:
+    paths:
+      - ".github/workflows/verify-insights-live.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify live configuration (read-only)
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 149.28.165.62
+          username: root
+          key: ${{ secrets.VULTR_SSH_KEY }}
+          script: |
+            set -eu
+            WP_CONFIG="/var/www/wkdigital.com.au/wp-config.php"
+            CONFIG_FILE="/var/lib/wk-digital-insights/wp-config-insights.php"
+            CRED_PATH="/var/lib/wk-digital-insights/google-readonly.json"
+            test -f "$WP_CONFIG" && echo "wp-config.php=present"
+            test -f "$CONFIG_FILE" && echo "insights-config=present"
+            test -f "$CRED_PATH" && echo "credentials-file=present"
+            grep -Fq "$CONFIG_FILE" "$WP_CONFIG" && echo "include=present" || echo "include=missing"
+            php -l "$WP_CONFIG" >/dev/null && echo "wp-config-php=valid"
+            php -l "$CONFIG_FILE" >/dev/null && echo "insights-config-php=valid"
+            php -r 'include $argv[1]; echo "ga4-constant=" . (defined("WKEL_GA4_PROPERTY_ID") ? "defined" : "missing") . PHP_EOL; echo "search-console-constant=" . (defined("WKEL_SEARCH_CONSOLE_SITE_URL") ? "defined" : "missing") . PHP_EOL; echo "service-account-constant=" . (defined("WKEL_GOOGLE_SERVICE_ACCOUNT_JSON") ? "defined" : "missing") . PHP_EOL;' "$CONFIG_FILE"
