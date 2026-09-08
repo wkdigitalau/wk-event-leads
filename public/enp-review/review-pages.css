@@ -172,6 +172,15 @@
   font-size: .86rem;
 }
 .hero-review-note strong { color: #ffb3d8; }
+.hero-confirmed-note {
+  margin-top: 22px;
+  padding: 13px 16px;
+  border-left: 4px solid var(--gold);
+  background: rgba(208,190,148,.18);
+  color: #fff;
+  font-size: .86rem;
+}
+.hero-confirmed-note strong { color: #f5e8ba; }
 .promise-panel {
   padding: 20px 22px;
   border-radius: 18px;
