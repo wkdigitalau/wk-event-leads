@@ -587,3 +587,4 @@ class WKEL_Submission {
         return new WP_REST_Response(['success' => true, 'created' => $created, 'lead' => WKEL_Pipeline::get_lead_detail($lead_id)], $created ? 201 : 200);
     }
 }
+

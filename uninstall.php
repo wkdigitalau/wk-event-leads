@@ -88,3 +88,4 @@ $wpdb->query(
 
 // Flush rewrite rules
 flush_rewrite_rules();
+

@@ -415,3 +415,4 @@ class WKEL_Email {
         return 'other';
     }
 }
+
