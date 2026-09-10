@@ -71,6 +71,14 @@ class WKEL_Submission {
             'callback'            => [self::class, 'resend_email'],
             'permission_callback' => [self::class, 'admin_permission'],
         ]);
+
+        // Read-only suppression/bounce feed for the scheduled campaign runner.
+        // This route exposes only recipient status fields; no names, notes or transcripts.
+        register_rest_route('wk-event-leads/v1', '/suppression', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [WKEL_Campaign::class, 'rest_suppression'],
+            'permission_callback' => [WKEL_Campaign::class, 'readonly_permission'],
+        ]);
     }
 
     public static function admin_permission(): bool {
