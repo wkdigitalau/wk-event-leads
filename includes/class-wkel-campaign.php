@@ -6,6 +6,77 @@ defined('ABSPATH') || exit;
  */
 class WKEL_Campaign {
 
+    /**
+     * Create the narrowly-scoped role used by the background suppression probe.
+     * Existing sites get the role on the next request without changing administrator access.
+     */
+    public static function ensure_readonly_role(): void {
+        if (!get_role('wkel_suppression_reader')) {
+            add_role(
+                'wkel_suppression_reader',
+                __('WKEL Suppression Reader', 'wk-event-leads'),
+                [
+                    'read'                  => true,
+                    'wkel_read_suppression' => true,
+                ]
+            );
+        }
+    }
+
+    public static function readonly_permission(WP_REST_Request $request): bool {
+        return current_user_can('wkel_read_suppression');
+    }
+
+    /**
+     * Return only addresses that must be excluded from marketing sends.
+     * Authentication is supplied by a WordPress Application Password for the
+     * dedicated WKEL Suppression Reader user.
+     */
+    public static function rest_suppression(WP_REST_Request $request): WP_REST_Response {
+        nocache_headers();
+
+        $posts = get_posts([
+            'post_type'      => 'wkel_lead',
+            'posts_per_page' => -1,
+            'post_status'    => 'publish',
+            'meta_query'     => [
+                'relation' => 'OR',
+                ['key' => '_wkel_marketing_status', 'value' => 'unsubscribed'],
+                ['key' => '_wkel_email_status', 'value' => 'failed'],
+                ['key' => '_wkel_email_status', 'value' => 'bounced'],
+            ],
+            'fields'         => 'ids',
+        ]);
+
+        $items = [];
+        foreach ($posts as $lead_id) {
+            $email = WKEL_Encryption::decrypt((string) get_post_meta($lead_id, '_wkel_wkel_email', true));
+            if (!$email) {
+                $email = WKEL_Encryption::decrypt((string) get_post_meta($lead_id, '_wkel_email', true));
+            }
+            $email = sanitize_email($email);
+            if (!$email) {
+                continue;
+            }
+
+            $marketing_status = get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'subscribed';
+            $email_status     = get_post_meta($lead_id, '_wkel_email_status', true) ?: '';
+            $items[] = [
+                'email'            => $email,
+                'marketing_status' => sanitize_key($marketing_status),
+                'email_status'     => sanitize_key($email_status),
+                'unsubscribed_at'  => (int) get_post_meta($lead_id, '_wkel_unsubscribed_at', true),
+                'status_source'    => sanitize_key((string) get_post_meta($lead_id, '_wkel_unsubscribe_source', true)),
+            ];
+        }
+
+        return new WP_REST_Response([
+            'generated_at' => gmdate('c'),
+            'count'        => count($items),
+            'items'        => $items,
+        ], 200);
+    }
+
     public static function add_rewrite_rules(): void {
         add_rewrite_rule('^unsubscribe/?$', 'index.php?wkel_unsubscribe=1', 'top');
         add_filter('query_vars', [self::class, 'query_vars']);
