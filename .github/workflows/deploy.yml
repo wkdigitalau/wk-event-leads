@@ -1,38 +1,78 @@
-name: Deploy to wkdigital.com.au
+name: Deploy Event Leads plugin
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      site:
+        description: Site to deploy
+        required: true
+        default: wkdigital
+        type: choice
+        options:
+          - wkdigital
+          - connect
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event_name == 'push' && 'wkdigital-production' || (inputs.site == 'connect' && 'connect-production' || 'wkdigital-production') }}
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '149.28.165.62' }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY || secrets.VULTR_SSH_KEY }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/var/www/wkdigital.com.au/wp-content/plugins/wk-event-leads' }}
+      DEPLOY_SITE: ${{ github.event_name == 'push' && 'wkdigital' || inputs.site }}
+      DEPLOY_IS_CONFIGURED: ${{ github.event_name == 'push' || (inputs.site == 'connect' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_KEY != '' && secrets.DEPLOY_PATH != '') || (inputs.site == 'wkdigital' && (secrets.DEPLOY_KEY != '' || secrets.VULTR_SSH_KEY != '')) }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is not configured"; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "DEPLOY_USER is not configured"; exit 1; }
+          test -n "$DEPLOY_KEY" || { echo "DEPLOY_KEY is not configured"; exit 1; }
+          test -n "$DEPLOY_PATH" || { echo "DEPLOY_PATH is not configured"; exit 1; }
+          test "$DEPLOY_IS_CONFIGURED" = "true" || {
+            echo "The selected site does not have its own GitHub Environment deployment secrets configured."
+            exit 1
+          }
+          echo "Preparing deployment for $DEPLOY_SITE"
+          echo "Target path: $DEPLOY_PATH"
+
       - name: Copy plugin files to server
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: 149.28.165.62
-          username: root
-          key: ${{ secrets.VULTR_SSH_KEY }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
           source: "."
-          target: "/var/www/wkdigital.com.au/wp-content/plugins/wk-event-leads"
+          target: ${{ env.DEPLOY_PATH }}
           strip_components: 1
           rm: false
 
       - name: Fix permissions
         uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          DEPLOY_SITE: ${{ env.DEPLOY_SITE }}
         with:
-          host: 149.28.165.62
-          username: root
-          key: ${{ secrets.VULTR_SSH_KEY }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
           script: |
             set -e
-            PLUGIN="/var/www/wkdigital.com.au/wp-content/plugins/wk-event-leads"
+            PLUGIN="$DEPLOY_PATH"
             chown -R www-data:www-data "$PLUGIN"
             find "$PLUGIN" -type f -exec chmod 644 {} \;
             find "$PLUGIN" -type d -exec chmod 755 {} \;
-            echo "Deployed wk-event-leads to wkdigital.com.au at $(date)"
+            echo "Deployed wk-event-leads to $DEPLOY_SITE at $(date)"
