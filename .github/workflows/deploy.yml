@@ -69,6 +69,7 @@ jobs:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
           key: ${{ env.DEPLOY_KEY }}
+          envs: DEPLOY_PATH,DEPLOY_SITE
           script: |
             set -e
             PLUGIN="$DEPLOY_PATH"
