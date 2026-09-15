@@ -2,7 +2,10 @@ name: Configure WK Digital Insights credentials
 
 on:
   workflow_run:
-    workflows: ["Deploy to wkdigital.com.au"]
+    # Must match the live deployment workflow name exactly. If this drifts,
+    # plugin deploys succeed but the read-only Google credentials are never
+    # installed and the dashboard stays in "not configured" state.
+    workflows: ["Deploy Event Leads plugin"]
     types: [completed]
 
 permissions:
