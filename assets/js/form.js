@@ -60,10 +60,18 @@
 
     function buildPayload(form) {
         const data    = new FormData(form);
+        const params  = new URLSearchParams(window.location.search);
         const payload = {
             event:        form.dataset.event || 'general',
             wkel_privacy: form.querySelector('[name="wkel_privacy"]')?.checked ? '1' : '0',
             wkel_hp:      form.querySelector('[name="wkel_hp"]')?.value || '',
+            // Keep campaign attribution with the lead. These values are non-PII
+            // and let the WordPress dashboard join enquiries back to GA4 links.
+            utm_source:   params.get('utm_source') || '',
+            utm_medium:   params.get('utm_medium') || '',
+            utm_campaign: params.get('utm_campaign') || '',
+            utm_content:  params.get('utm_content') || '',
+            landing_page: window.location.pathname,
         };
 
         for (const [key, value] of data.entries()) {
