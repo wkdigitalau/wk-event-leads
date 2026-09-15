@@ -145,6 +145,14 @@ class WKEL_Submission {
             }
         }
 
+        // Campaign attribution is deliberately kept outside the lead schema:
+        // it is operational metadata, not a contact field.
+        foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'landing_page'] as $key) {
+            if (array_key_exists($key, $body)) {
+                $sanitised[$key] = sanitize_text_field((string) $body[$key]);
+            }
+        }
+
         if (!empty($errors)) {
             return new WP_REST_Response(['success' => false, 'errors' => $errors], 422);
         }
@@ -275,6 +283,18 @@ class WKEL_Submission {
             '_wkel_source'          => sanitize_key($source),
             '_wkel_lead_type'       => WKEL_Schema::sanitise_lead_type($lead_type),
         ];
+
+        // Non-PII campaign attribution supplied by the landing-page form.
+        // Keep it in WordPress so the dashboard can reconcile enquiries with
+        // GA4 campaign rows without sending names or contact details to Google.
+        foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_content'] as $key) {
+            if (isset($sanitised[$key])) {
+                $system_meta['_wkel_' . $key] = sanitize_text_field((string) $sanitised[$key]);
+            }
+        }
+        if (isset($sanitised['landing_page'])) {
+            $system_meta['_wkel_landing_page'] = sanitize_text_field((string) $sanitised['landing_page']);
+        }
 
         foreach ($system_meta as $key => $value) {
             update_post_meta($lead_id, $key, $value);
@@ -582,6 +602,12 @@ class WKEL_Submission {
         foreach (['service_interest', 'owner', 'priority', 'loss_reason', 'next_action', 'next_action_at'] as $meta_key) {
             if (array_key_exists($meta_key, $body)) {
                 update_post_meta($lead_id, '_wkel_' . $meta_key, sanitize_text_field($body[$meta_key]));
+            }
+        }
+
+        foreach (['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'landing_page'] as $key) {
+            if (array_key_exists($key, $body)) {
+                update_post_meta($lead_id, '_wkel_' . $key, sanitize_text_field((string) $body[$key]));
             }
         }
 
