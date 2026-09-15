@@ -73,6 +73,18 @@ class WKEL_Insights {
                         <?php self::metric_card('Search impressions', $google['search']['impressions'] ?? '—', 'Google Search Console'); ?>
                         <?php self::metric_card('Search CTR', isset($google['search']['ctr']) ? round($google['search']['ctr'] * 100, 1) . '%' : '—', 'Google Search Console'); ?>
                     </div>
+                    <div class="wkel-insights__split">
+                        <section class="wkel-insights__section">
+                            <h2><?php esc_html_e('Email / product campaigns', 'wk-event-leads'); ?></h2>
+                            <p><?php esc_html_e('GA4 sessions and key events grouped by campaign and source. Use UTM campaign names consistently in outreach links.', 'wk-event-leads'); ?></p>
+                            <?php self::google_campaign_table($google['ga4']['campaigns'] ?? []); ?>
+                        </section>
+                        <section class="wkel-insights__section">
+                            <h2><?php esc_html_e('Top pages from Search', 'wk-event-leads'); ?></h2>
+                            <p><?php esc_html_e('Search Console clicks, impressions and average position by page.', 'wk-event-leads'); ?></p>
+                            <?php self::google_search_table($google['search']['pages'] ?? []); ?>
+                        </section>
+                    </div>
                 <?php endif; ?>
             </section>
 
@@ -80,6 +92,12 @@ class WKEL_Insights {
                 <section class="wkel-insights__section"><h2><?php esc_html_e('Lead sources', 'wk-event-leads'); ?></h2><p><?php esc_html_e('Records by stored source.', 'wk-event-leads'); ?></p><?php self::simple_table($metrics['sources'], 'Source'); ?></section>
                 <section class="wkel-insights__section"><h2><?php esc_html_e('Campaign / event', 'wk-event-leads'); ?></h2><p><?php esc_html_e('Records by event or campaign key.', 'wk-event-leads'); ?></p><?php self::simple_table($metrics['events'], 'Event'); ?></section>
             </div>
+
+            <section class="wkel-insights__section">
+                <h2><?php esc_html_e('Enquiries by product campaign', 'wk-event-leads'); ?></h2>
+                <p><?php esc_html_e('WordPress leads matched by UTM campaign where available, falling back to the event key for older records.', 'wk-event-leads'); ?></p>
+                <?php self::simple_table($metrics['campaigns'], 'Campaign'); ?>
+            </section>
 
             <section class="wkel-insights__section">
                 <h2><?php esc_html_e('Google connection', 'wk-event-leads'); ?></h2>
@@ -114,6 +132,28 @@ class WKEL_Insights {
         echo '</tbody></table>';
     }
 
+    private static function google_campaign_table(array $rows): void {
+        echo '<table><thead><tr><th>Campaign / source</th><th>Sessions</th><th>Key events</th><th>Users</th></tr></thead><tbody>';
+        if (!$rows) {
+            echo '<tr><td colspan="4">No campaign rows yet. New tagged visits will appear after GA4 processing.</td></tr>';
+        }
+        foreach ($rows as $row) {
+            echo '<tr><td><code>' . esc_html(($row['campaign'] ?? '(not set)') . ' / ' . ($row['source'] ?? '(not set)')) . '</code></td><td>' . esc_html((string) ($row['sessions'] ?? 0)) . '</td><td>' . esc_html((string) ($row['key_events'] ?? 0)) . '</td><td>' . esc_html((string) ($row['users'] ?? 0)) . '</td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+
+    private static function google_search_table(array $rows): void {
+        echo '<table><thead><tr><th>Page</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead><tbody>';
+        if (!$rows) {
+            echo '<tr><td colspan="5">No Search Console page rows yet.</td></tr>';
+        }
+        foreach ($rows as $row) {
+            echo '<tr><td><code>' . esc_html((string) ($row['page'] ?? '')) . '</code></td><td>' . esc_html((string) ($row['clicks'] ?? 0)) . '</td><td>' . esc_html((string) ($row['impressions'] ?? 0)) . '</td><td>' . esc_html(round(((float) ($row['ctr'] ?? 0)) * 100, 1) . '%') . '</td><td>' . esc_html(number_format_i18n((float) ($row['position'] ?? 0), 1)) . '</td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+
     private static function lead_metrics(int $days): array {
         $ids = get_posts([
             'post_type'      => 'wkel_lead',
@@ -123,7 +163,7 @@ class WKEL_Insights {
             'date_query'     => [['after' => $days . ' days ago', 'inclusive' => true]],
         ]);
 
-        $out = ['total' => count($ids), 'sales' => 0, 'qualified' => 0, 'won' => 0, 'bookings' => 0, 'calls' => 0, 'support' => 0, 'unreviewed' => 0, 'sources' => [], 'events' => []];
+        $out = ['total' => count($ids), 'sales' => 0, 'qualified' => 0, 'won' => 0, 'bookings' => 0, 'calls' => 0, 'support' => 0, 'unreviewed' => 0, 'sources' => [], 'events' => [], 'campaigns' => []];
         foreach ($ids as $id) {
             $type     = (string) get_post_meta($id, '_wkel_lead_type', true) ?: 'sales';
             $stage    = (string) get_post_meta($id, '_wkel_stage', true) ?: 'new';
@@ -131,9 +171,17 @@ class WKEL_Insights {
             $event    = (string) get_post_meta($id, '_wkel_event', true) ?: 'not_set';
             $reviewed = (string) get_post_meta($id, '_wkel_reviewed', true);
             $cal      = (string) get_post_meta($id, '_wkel_cal_status', true);
+            $campaign = (string) get_post_meta($id, '_wkel_utm_campaign', true);
+            if ($campaign === '') {
+                $campaign = (string) get_post_meta($id, '_wkel_campaign', true);
+            }
+            if ($campaign === '') {
+                $campaign = $event;
+            }
 
             $out['sources'][$source] = ($out['sources'][$source] ?? 0) + 1;
             $out['events'][$event]   = ($out['events'][$event] ?? 0) + 1;
+            $out['campaigns'][$campaign] = ($out['campaigns'][$campaign] ?? 0) + 1;
             if ($type === 'sales') $out['sales']++;
             if (in_array($type, ['support', 'client_request'], true)) $out['support']++;
             if (in_array($stage, ['qualified', 'proposal', 'closed_won'], true)) $out['qualified']++;
@@ -155,12 +203,21 @@ class WKEL_Insights {
 
         $start = gmdate('Y-m-d', strtotime('-' . ($days - 1) . ' days'));
         $end   = gmdate('Y-m-d');
-        $ga4   = self::google_post(
-            'https://analyticsdata.googleapis.com/v1beta/properties/' . rawurlencode((string) WKEL_GA4_PROPERTY_ID) . ':runReport',
-            $token,
-            ['dateRanges' => [['startDate' => $start, 'endDate' => $end]], 'metrics' => [['name' => 'activeUsers'], ['name' => 'sessions'], ['name' => 'keyEvents']]]
-        );
+        $ga_url = 'https://analyticsdata.googleapis.com/v1beta/properties/' . rawurlencode((string) WKEL_GA4_PROPERTY_ID) . ':runReport';
+        $ga4   = self::google_post($ga_url, $token, [
+            'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
+            'metrics' => [['name' => 'activeUsers'], ['name' => 'sessions'], ['name' => 'keyEvents']],
+        ]);
         if (is_wp_error($ga4)) return $ga4;
+
+        $campaign_report = self::google_post($ga_url, $token, [
+            'dateRanges' => [['startDate' => $start, 'endDate' => $end]],
+            'dimensions' => [['name' => 'sessionCampaignName'], ['name' => 'sessionSourceMedium']],
+            'metrics' => [['name' => 'activeUsers'], ['name' => 'sessions'], ['name' => 'keyEvents']],
+            'limit' => 25,
+            'orderBys' => [['metric' => ['metricName' => 'sessions'], 'desc' => true]],
+        ]);
+        if (is_wp_error($campaign_report)) return $campaign_report;
 
         $search = self::google_post(
             'https://www.googleapis.com/webmasters/v3/sites/' . rawurlencode((string) WKEL_SEARCH_CONSOLE_SITE_URL) . '/searchAnalytics/query',
@@ -169,19 +226,50 @@ class WKEL_Insights {
         );
         if (is_wp_error($search)) return $search;
 
+        $search_pages = self::google_post(
+            'https://www.googleapis.com/webmasters/v3/sites/' . rawurlencode((string) WKEL_SEARCH_CONSOLE_SITE_URL) . '/searchAnalytics/query',
+            $token,
+            ['startDate' => $start, 'endDate' => $end, 'type' => 'web', 'dimensions' => ['page'], 'rowLimit' => 10, 'orderBy' => [['field' => 'clicks', 'descending' => true]]]
+        );
+        if (is_wp_error($search_pages)) return $search_pages;
+
         $ga_values = $ga4['rows'][0]['metricValues'] ?? [];
         $sc_values = $search['rows'][0] ?? [];
+        $campaigns = [];
+        foreach (($campaign_report['rows'] ?? []) as $row) {
+            $dimensions = $row['dimensionValues'] ?? [];
+            $values = $row['metricValues'] ?? [];
+            $campaigns[] = [
+                'campaign' => $dimensions[0]['value'] ?? '(not set)',
+                'source' => $dimensions[1]['value'] ?? '(not set)',
+                'users' => $values[0]['value'] ?? '0',
+                'sessions' => $values[1]['value'] ?? '0',
+                'key_events' => $values[2]['value'] ?? '0',
+            ];
+        }
+        $pages = [];
+        foreach (($search_pages['rows'] ?? []) as $row) {
+            $pages[] = [
+                'page' => $row['keys'][0] ?? '',
+                'clicks' => $row['clicks'] ?? 0,
+                'impressions' => $row['impressions'] ?? 0,
+                'ctr' => $row['ctr'] ?? 0,
+                'position' => $row['position'] ?? 0,
+            ];
+        }
         return [
             'configured' => true,
             'ga4' => [
                 'active_users' => $ga_values[0]['value'] ?? '0',
                 'sessions'     => $ga_values[1]['value'] ?? '0',
                 'key_events'   => $ga_values[2]['value'] ?? '0',
+                'campaigns'    => $campaigns,
             ],
             'search' => [
                 'clicks'      => $sc_values['clicks'] ?? 0,
                 'impressions' => $sc_values['impressions'] ?? 0,
                 'ctr'         => $sc_values['ctr'] ?? 0,
+                'pages'       => $pages,
             ],
         ];
     }
