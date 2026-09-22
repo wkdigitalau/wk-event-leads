@@ -3,6 +3,8 @@ name: Deploy Event Leads plugin
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       site:
@@ -25,10 +27,11 @@ jobs:
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '149.28.165.62' }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY || secrets.VULTR_SSH_KEY }}
+      # Connect shares the Vultr VM and uses the existing repository-level server key.
+      DEPLOY_KEY: ${{ inputs.site == 'connect' && secrets.VULTR_SSH_KEY || secrets.DEPLOY_KEY || secrets.VULTR_SSH_KEY }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/var/www/wkdigital.com.au/wp-content/plugins/wk-event-leads' }}
       DEPLOY_SITE: ${{ github.event_name == 'push' && 'wkdigital' || inputs.site }}
-      DEPLOY_IS_CONFIGURED: ${{ github.event_name == 'push' || (inputs.site == 'connect' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_KEY != '' && secrets.DEPLOY_PATH != '') || (inputs.site == 'wkdigital' && (secrets.DEPLOY_KEY != '' || secrets.VULTR_SSH_KEY != '')) }}
+      DEPLOY_IS_CONFIGURED: ${{ github.event_name == 'push' || (inputs.site == 'connect' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_PATH != '' && secrets.VULTR_SSH_KEY != '') || (inputs.site == 'wkdigital' && (secrets.DEPLOY_KEY != '' || secrets.VULTR_SSH_KEY != '')) }}
 
     steps:
       - name: Checkout
@@ -48,6 +51,36 @@ jobs:
           }
           echo "Preparing deployment for $DEPLOY_SITE"
           echo "Target path: $DEPLOY_PATH"
+
+      - name: Back up Connect database and current plugin
+        if: ${{ env.DEPLOY_SITE == 'connect' }}
+        uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
+          envs: DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            test "$(id -u)" -eq 0 || { echo "Connect deployment requires root SSH access for the ownership step; stopped before backup or file copy"; exit 1; }
+            PLUGIN="$DEPLOY_PATH"
+            WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
+            test -f "$WP_ROOT/wp-config.php" || { echo "WordPress root not found from DEPLOY_PATH"; exit 1; }
+            command -v wp >/dev/null || { echo "WP-CLI is not installed; backup stopped before deployment"; exit 1; }
+            SITE_URL="$(wp option get siteurl --path="$WP_ROOT" --allow-root)"
+            case "$SITE_URL" in "https://connect.digitalp.com.au"|"https://connect.digitalp.com.au/"|"http://connect.digitalp.com.au"|"http://connect.digitalp.com.au/") ;; *) echo "WordPress URL mismatch; backup/deployment stopped"; exit 1 ;; esac
+            BACKUP_DIR="$HOME/wkel-connect-backups"
+            install -d -m 700 "$BACKUP_DIR"
+            STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+            DB_BACKUP="$BACKUP_DIR/connect-db-$STAMP.sql"
+            PLUGIN_BACKUP="$BACKUP_DIR/connect-plugin-$STAMP.tar.gz"
+            wp db export "$DB_BACKUP" --path="$WP_ROOT" --allow-root
+            tar -czf "$PLUGIN_BACKUP" -C "$(dirname "$PLUGIN")" "$(basename "$PLUGIN")"
+            test -s "$DB_BACKUP" && test -s "$PLUGIN_BACKUP"
+            chmod 600 "$DB_BACKUP" "$PLUGIN_BACKUP"
+            echo "Verified backup files: $DB_BACKUP and $PLUGIN_BACKUP"
 
       - name: Copy plugin files to server
         uses: appleboy/scp-action@v0.1.7
@@ -74,6 +107,6 @@ jobs:
             set -e
             PLUGIN="$DEPLOY_PATH"
             chown -R www-data:www-data "$PLUGIN"
-            find "$PLUGIN" -type f -exec chmod 644 {} \;
-            find "$PLUGIN" -type d -exec chmod 755 {} \;
+            find "$PLUGIN" -type f -exec chmod 644 {} +
+            find "$PLUGIN" -type d -exec chmod 755 {} +
             echo "Deployed wk-event-leads to $DEPLOY_SITE at $(date)"
