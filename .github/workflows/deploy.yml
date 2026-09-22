@@ -50,6 +50,33 @@ jobs:
           echo "Preparing deployment for $DEPLOY_SITE"
           echo "Target path: $DEPLOY_PATH"
 
+      - name: Back up Connect database and current plugin
+        if: ${{ env.DEPLOY_SITE == 'connect' }}
+        uses: appleboy/ssh-action@v1
+        env:
+          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
+          envs: DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            PLUGIN="$DEPLOY_PATH"
+            WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
+            test -f "$WP_ROOT/wp-config.php" || { echo "WordPress root not found from DEPLOY_PATH"; exit 1; }
+            command -v wp >/dev/null || { echo "WP-CLI is not installed; backup stopped before deployment"; exit 1; }
+            BACKUP_DIR="\${HOME}/wkel-connect-backups"
+            install -d -m 700 "$BACKUP_DIR"
+            STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+            DB_BACKUP="$BACKUP_DIR/connect-db-$STAMP.sql"
+            PLUGIN_BACKUP="$BACKUP_DIR/connect-plugin-$STAMP.tar.gz"
+            wp db export "$DB_BACKUP" --path="$WP_ROOT" --allow-root
+            tar -czf "$PLUGIN_BACKUP" -C "$(dirname "$PLUGIN")" "$(basename "$PLUGIN")"
+            test -s "$DB_BACKUP" && test -s "$PLUGIN_BACKUP"
+            chmod 600 "$DB_BACKUP" "$PLUGIN_BACKUP"
+            echo "Verified backup files: $DB_BACKUP and $PLUGIN_BACKUP"
+
       - name: Copy plugin files to server
         uses: appleboy/scp-action@v0.1.7
         with:
