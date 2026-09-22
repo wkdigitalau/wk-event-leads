@@ -64,6 +64,7 @@ jobs:
           envs: DEPLOY_PATH
           script: |
             set -euo pipefail
+            test "$(id -u)" -eq 0 || { echo "Connect deployment requires root SSH access for the ownership step; stopped before backup or file copy"; exit 1; }
             PLUGIN="$DEPLOY_PATH"
             WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
             test -f "$WP_ROOT/wp-config.php" || { echo "WordPress root not found from DEPLOY_PATH"; exit 1; }
@@ -106,6 +107,6 @@ jobs:
             set -e
             PLUGIN="$DEPLOY_PATH"
             chown -R www-data:www-data "$PLUGIN"
-            find "$PLUGIN" -type f -exec chmod 644 {} \;
-            find "$PLUGIN" -type d -exec chmod 755 {} \;
+            find "$PLUGIN" -type f -exec chmod 644 {} \\\;
+            find "$PLUGIN" -type d -exec chmod 755 {} \\\;
             echo "Deployed wk-event-leads to $DEPLOY_SITE at $(date)"
