@@ -107,6 +107,6 @@ jobs:
             set -e
             PLUGIN="$DEPLOY_PATH"
             chown -R www-data:www-data "$PLUGIN"
-            find "$PLUGIN" -type f -exec chmod 644 {} \\\;
-            find "$PLUGIN" -type d -exec chmod 755 {} \\\;
+            find "$PLUGIN" -type f -exec chmod 644 {} +
+            find "$PLUGIN" -type d -exec chmod 755 {} +
             echo "Deployed wk-event-leads to $DEPLOY_SITE at $(date)"
