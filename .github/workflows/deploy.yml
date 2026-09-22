@@ -25,10 +25,11 @@ jobs:
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '149.28.165.62' }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
-      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY || secrets.VULTR_SSH_KEY }}
+      # Connect shares the Vultr VM and uses the existing repository-level server key.
+      DEPLOY_KEY: ${{ inputs.site == 'connect' && secrets.VULTR_SSH_KEY || secrets.DEPLOY_KEY || secrets.VULTR_SSH_KEY }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/var/www/wkdigital.com.au/wp-content/plugins/wk-event-leads' }}
       DEPLOY_SITE: ${{ github.event_name == 'push' && 'wkdigital' || inputs.site }}
-      DEPLOY_IS_CONFIGURED: ${{ github.event_name == 'push' || (inputs.site == 'connect' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_KEY != '' && secrets.DEPLOY_PATH != '') || (inputs.site == 'wkdigital' && (secrets.DEPLOY_KEY != '' || secrets.VULTR_SSH_KEY != '')) }}
+      DEPLOY_IS_CONFIGURED: ${{ github.event_name == 'push' || (inputs.site == 'connect' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_PATH != '' && secrets.VULTR_SSH_KEY != '') || (inputs.site == 'wkdigital' && (secrets.DEPLOY_KEY != '' || secrets.VULTR_SSH_KEY != '')) }}
 
     steps:
       - name: Checkout
