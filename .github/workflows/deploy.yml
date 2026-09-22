@@ -66,6 +66,8 @@ jobs:
             WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
             test -f "$WP_ROOT/wp-config.php" || { echo "WordPress root not found from DEPLOY_PATH"; exit 1; }
             command -v wp >/dev/null || { echo "WP-CLI is not installed; backup stopped before deployment"; exit 1; }
+            SITE_URL="$(wp option get siteurl --path="$WP_ROOT" --allow-root)"
+            case "$SITE_URL" in "https://connect.digitalp.com.au"|"https://connect.digitalp.com.au/"|"http://connect.digitalp.com.au"|"http://connect.digitalp.com.au/") ;; *) echo "WordPress URL mismatch; backup/deployment stopped"; exit 1 ;; esac
             BACKUP_DIR="$HOME/wkel-connect-backups"
             install -d -m 700 "$BACKUP_DIR"
             STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
