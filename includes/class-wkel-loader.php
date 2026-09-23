@@ -22,6 +22,7 @@ class WKEL_Loader {
             'class-wkel-cpt.php',
             'class-wkel-form.php',
             'class-wkel-submission.php',
+            'class-wkel-cal-webhook.php',
             'class-wkel-email.php',
             'class-wkel-campaign.php',
             'class-wkel-pipeline.php',
@@ -50,6 +51,7 @@ class WKEL_Loader {
 
         // REST submission
         $this->add_action('rest_api_init', 'WKEL_Submission', 'register_routes');
+        $this->add_action('rest_api_init', 'WKEL_Cal_Webhook', 'register_routes');
 
         // Email (Action Scheduler)
         $this->add_action('wkel_send_confirmation_email', 'WKEL_Email', 'send_confirmation', 10, 1);
