@@ -46,6 +46,7 @@ class WKEL_Settings {
         register_setting('wkel_security', 'wkel_rate_limit',          ['sanitize_callback' => 'absint']);
         register_setting('wkel_security', 'wkel_honeypot_enabled',    ['sanitize_callback' => 'sanitize_key']);
         register_setting('wkel_security', 'wkel_data_retention_days', ['sanitize_callback' => 'absint']);
+        register_setting('wkel_security', 'wkel_cal_webhook_secret', ['sanitize_callback' => [self::class, 'sanitise_webhook_secret']]);
 
         // URLs
         register_setting('wkel_urls', 'wkel_atncs_url', ['sanitize_callback' => 'esc_url_raw']);
@@ -817,7 +818,17 @@ class WKEL_Settings {
         <form method="post" action="options.php" class="wkel-settings-form">
         <?php settings_fields('wkel_security'); ?>
 
+        <?php $has_cal_webhook_secret = !empty(get_option('wkel_cal_webhook_secret', '')); ?>
         <table class="form-table">
+            <tr>
+                <th><label for="wkel_cal_webhook_secret"><?php esc_html_e('Cal.com Webhook Secret', 'wk-event-leads'); ?></label></th>
+                <td>
+                    <input type="password" id="wkel_cal_webhook_secret" name="wkel_cal_webhook_secret"
+                           value="<?php echo $has_cal_webhook_secret ? '••••••••' : ''; ?>" class="regular-text" autocomplete="new-password">
+                    <p class="description"><?php esc_html_e('Use the same secret in Cal.com. Leave unchanged to keep the existing secret.', 'wk-event-leads'); ?></p>
+                    <p class="description"><strong><?php esc_html_e('Webhook URL:', 'wk-event-leads'); ?></strong> <code><?php echo esc_html(rest_url('wk-event-leads/v1/webhooks/cal')); ?></code></p>
+                </td>
+            </tr>
             <tr>
                 <th><label for="wkel_rate_limit"><?php esc_html_e('Rate Limit', 'wk-event-leads'); ?></label></th>
                 <td>
