@@ -164,6 +164,15 @@
             html += '</div>';
         });
 
+        // Choose a reusable outreach template for this lead. The default keeps existing behaviour.
+        html += '<div class="wkel-detail-field"><label>Email template</label>'
+            + '<select name="email_template_id" data-lead-id="' + lead.id + '" class="wkel-detail-input">'
+            + '<option value="">Default confirmation email</option>';
+        (cfg.emailTemplates || []).forEach(function (template) {
+            html += '<option value="' + esc(template.id) + '"' + (template.id === lead.email_template_id ? ' selected' : '') + '>' + esc(template.name) + '</option>';
+        });
+        html += '</select><p class="description">Choose a saved message for this contact. Save the lead or send to retain the selection.</p></div>';
+
         // Admin notes
         html += '<div class="wkel-detail-field"><label>Admin Notes (private)</label>'
             + '<textarea name="admin_notes" data-lead-id="' + lead.id + '" class="wkel-detail-input" rows="3">' + esc(lead.admin_notes || '') + '</textarea>'
@@ -256,8 +265,9 @@
         // Resend email
         document.getElementById('wkel-detail-resend').addEventListener('click', function () {
             const id = parseInt(this.dataset.leadId, 10);
-            apiFetch('lead/' + id + '/resend-email', 'POST').then(function () {
-                showDetailNotice(container, 'Email queued for resend.', 'success');
+            const selectedTemplate = container.querySelector('[name="email_template_id"]')?.value || '';
+            apiFetch('lead/' + id + '/resend-email', 'POST', { email_template_id: selectedTemplate }).then(function () {
+                showDetailNotice(container, 'Email queued using the selected template.', 'success');
             });
         });
 
