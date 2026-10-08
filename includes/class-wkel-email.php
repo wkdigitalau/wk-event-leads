@@ -109,7 +109,8 @@ class WKEL_Email {
         $from_name    = sanitize_text_field(get_option('wkel_email_from_name', ''));
         $from_address = sanitize_email(get_option('wkel_email_from_address', ''));
         $reply_to     = sanitize_email(get_option('wkel_email_reply_to', ''));
-        $subject      = sanitize_text_field(get_option('wkel_email_subject', 'Great connecting with you today'));
+        $template = WKEL_Email_Templates::find((string) get_post_meta($lead_id, '_wkel_email_template_id', true));
+        $subject_template = $template['subject'] ?? get_option('wkel_email_subject', 'Great connecting with you today');
 
         if (!$from_address) {
             return null;
@@ -117,7 +118,8 @@ class WKEL_Email {
 
         $vars    = self::build_template_vars($lead_id);
         $vars    = apply_filters('wkel_email_template_vars', $vars, $lead_id);
-        $body    = self::replace_template_vars(get_option('wkel_email_body', ''), $vars);
+        $subject = sanitize_text_field(self::replace_template_vars((string) $subject_template, $vars));
+        $body    = self::replace_template_vars((string) ($template['body'] ?? get_option('wkel_email_body', '')), $vars);
 
         $payload = [
             'from'    => $from_name ? $from_name . ' <' . $from_address . '>' : $from_address,

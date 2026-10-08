@@ -23,6 +23,7 @@ class WKEL_Loader {
             'class-wkel-form.php',
             'class-wkel-submission.php',
             'class-wkel-cal-webhook.php',
+            'class-wkel-email-templates.php',
             'class-wkel-email.php',
             'class-wkel-campaign.php',
             'class-wkel-pipeline.php',
@@ -70,6 +71,9 @@ class WKEL_Loader {
             $this->add_action('admin_menu', 'WKEL_Campaign', 'register_admin_menu');
             $this->add_action('admin_enqueue_scripts', 'WKEL_Admin', 'enqueue_assets');
             $this->add_action('admin_menu', 'WKEL_Settings', 'register_menu');
+            $this->add_action('admin_menu', 'WKEL_Email_Templates', 'register_menu');
+            $this->add_action('admin_post_wkel_save_email_template', 'WKEL_Email_Templates', 'save');
+            $this->add_action('admin_post_wkel_delete_email_template', 'WKEL_Email_Templates', 'delete');
             $this->add_action('admin_init', 'WKEL_Settings', 'register_settings');
         }
     }

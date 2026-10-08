@@ -84,6 +84,7 @@ class WKEL_Admin {
                 'stages'      => $stages,
                 'schemaFields'=> WKEL_Schema::get_fields(),
                 'allStages'   => $stages,
+                'emailTemplates' => array_map(static fn($template) => ['id' => $template['id'], 'name' => $template['name']], WKEL_Email_Templates::get_all()),
             ]);
         }
 

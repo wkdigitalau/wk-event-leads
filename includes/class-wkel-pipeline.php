@@ -156,6 +156,7 @@ class WKEL_Pipeline {
             'stage'        => $stage_id,
             'stage_label'  => $stage_obj ? $stage_obj['label'] : $stage_id,
             'email_status' => get_post_meta($lead_id, '_wkel_email_status', true),
+            'email_template_id' => get_post_meta($lead_id, '_wkel_email_template_id', true),
             'email_sent_at'=> (int) get_post_meta($lead_id, '_wkel_email_sent_at', true),
             'event'        => get_post_meta($lead_id, '_wkel_event', true),
             'lead_type'    => get_post_meta($lead_id, '_wkel_lead_type', true) ?: 'sales',
