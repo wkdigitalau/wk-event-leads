@@ -147,6 +147,7 @@ jobs:
             echo "Removed inactive Connect plugin version 1.2.0; active version 1.3.2 preserved"
 
       - name: Copy plugin files to server
+        if: ${{ env.DEPLOY_SITE != 'connect' || !inputs.remove_legacy_connect_copy }}
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.DEPLOY_HOST }}
@@ -158,6 +159,7 @@ jobs:
           rm: false
 
       - name: Fix permissions
+        if: ${{ env.DEPLOY_SITE != 'connect' || !inputs.remove_legacy_connect_copy }}
         uses: appleboy/ssh-action@v1
         env:
           DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
