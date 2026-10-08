@@ -138,7 +138,7 @@ jobs:
             LEGACY_BACKUP="$BACKUP_DIR/connect-legacy-plugin-1.2.0-$STAMP.tar.gz"
             tar -czf "$LEGACY_BACKUP" -C "$PLUGINS_DIR" wk-event-leads
             test -s "$LEGACY_BACKUP" || { echo "Legacy backup failed; stopped"; exit 1; }
-            tar -tzf "$LEGACY_BACKUP" | grep -Fq "wk-event-leads/wk-event-leads.php" || { echo "Legacy backup verification failed; stopped"; exit 1; }
+            tar -tzf "$LEGACY_BACKUP" | awk -F/ '$NF == "wk-event-leads.php" { found=1 } END { exit !found }' || { echo "Legacy backup verification failed; stopped"; exit 1; }
             chmod 600 "$LEGACY_BACKUP"
             test "$(realpath -e "$LEGACY")" = "$PLUGINS_DIR/wk-event-leads" || { echo "Legacy path mismatch; stopped"; exit 1; }
             echo "Verified legacy backup: $LEGACY_BACKUP"
