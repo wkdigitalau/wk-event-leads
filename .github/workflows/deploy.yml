@@ -15,11 +15,6 @@ on:
         options:
           - wkdigital
           - connect
-      remove_legacy_connect_copy:
-        description: Back up and remove the inactive Connect-only WK Event Leads 1.2.0 folder
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -96,58 +91,7 @@ jobs:
             chmod 600 "$DB_BACKUP" "$PLUGIN_BACKUP"
             echo "Verified backup files: $DB_BACKUP and $PLUGIN_BACKUP"
 
-      - name: Back up and remove inactive Connect plugin copy
-        if: ${{ env.DEPLOY_SITE == 'connect' && inputs.remove_legacy_connect_copy }}
-        uses: appleboy/ssh-action@v1
-        env:
-          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_KEY }}
-          envs: DEPLOY_PATH
-          script: |
-            set -euo pipefail
-            test "$(id -u)" -eq 0 || { echo "Connect cleanup requires root SSH; stopped"; exit 1; }
-            CANDIDATE="$(dirname "$DEPLOY_PATH")"
-            WP_ROOT=""
-            while [ "$CANDIDATE" != "/" ]; do
-              if [ -f "$CANDIDATE/wp-config.php" ]; then WP_ROOT="$CANDIDATE"; break; fi
-              CANDIDATE="$(dirname "$CANDIDATE")"
-            done
-            test -n "$WP_ROOT" || { echo "WordPress root not found; stopped"; exit 1; }
-            command -v wp >/dev/null || { echo "WP-CLI missing; stopped"; exit 1; }
-            SITE_URL="$(wp option get siteurl --path="$WP_ROOT" --allow-root)"
-            case "$SITE_URL" in "https://connect.digitalp.com.au"|"https://connect.digitalp.com.au/"|"http://connect.digitalp.com.au"|"http://connect.digitalp.com.au/") ;; *) echo "WordPress URL mismatch; stopped"; exit 1 ;; esac
-
-            PLUGINS_DIR="$WP_ROOT/wp-content/plugins"
-            LEGACY="$PLUGINS_DIR/wk-event-leads"
-            ACTIVE="$PLUGINS_DIR/wk-event-leads.php"
-            test -d "$PLUGINS_DIR" && test -d "$LEGACY" && test ! -L "$LEGACY" || { echo "Expected legacy plugin folder missing or unexpected; stopped"; exit 1; }
-            test -f "$LEGACY/wk-event-leads.php" && test -f "$ACTIVE" || { echo "Expected plugin files missing; stopped"; exit 1; }
-            LEGACY_VERSION="$(wp plugin get wk-event-leads/wk-event-leads.php --field=version --path="$WP_ROOT" --allow-root)"
-            ACTIVE_VERSION="$(wp plugin get wk-event-leads.php --field=version --path="$WP_ROOT" --allow-root)"
-            test "$LEGACY_VERSION" = "1.2.0" || { echo "Legacy version is not 1.2.0; stopped"; exit 1; }
-            test "$ACTIVE_VERSION" = "1.3.2" || { echo "Active plugin is not 1.3.2; stopped"; exit 1; }
-            wp plugin is-active wk-event-leads.php --path="$WP_ROOT" --allow-root || { echo "Expected active 1.3.2 plugin is not active; stopped"; exit 1; }
-            if wp plugin is-active wk-event-leads/wk-event-leads.php --path="$WP_ROOT" --allow-root; then echo "Legacy copy is active; stopped"; exit 1; fi
-
-            BACKUP_DIR="$HOME/wkel-connect-backups"
-            install -d -m 700 "$BACKUP_DIR"
-            STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-            LEGACY_BACKUP="$BACKUP_DIR/connect-legacy-plugin-1.2.0-$STAMP.tar.gz"
-            tar -czf "$LEGACY_BACKUP" -C "$PLUGINS_DIR" wk-event-leads
-            test -s "$LEGACY_BACKUP" || { echo "Legacy backup failed; stopped"; exit 1; }
-            tar -tzf "$LEGACY_BACKUP" | awk -F/ '$NF == "wk-event-leads.php" { found=1 } END { exit !found }' || { echo "Legacy backup verification failed; stopped"; exit 1; }
-            chmod 600 "$LEGACY_BACKUP"
-            test "$(realpath -e "$LEGACY")" = "$PLUGINS_DIR/wk-event-leads" || { echo "Legacy path mismatch; stopped"; exit 1; }
-            echo "Verified legacy backup: $LEGACY_BACKUP"
-            rm -rf -- "$LEGACY"
-            test ! -e "$LEGACY" || { echo "Legacy folder still exists"; exit 1; }
-            echo "Removed inactive Connect plugin version 1.2.0; active version 1.3.2 preserved"
-
       - name: Copy plugin files to server
-        if: ${{ env.DEPLOY_SITE != 'connect' || !inputs.remove_legacy_connect_copy }}
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ env.DEPLOY_HOST }}
@@ -159,7 +103,6 @@ jobs:
           rm: false
 
       - name: Fix permissions
-        if: ${{ env.DEPLOY_SITE != 'connect' || !inputs.remove_legacy_connect_copy }}
         uses: appleboy/ssh-action@v1
         env:
           DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
