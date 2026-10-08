@@ -457,7 +457,7 @@ class WKEL_Submission {
             return new WP_REST_Response(['success' => false, 'message' => 'Lead not found.'], 404);
         }
 
-        $body = $request->get_json_params();
+        $body = $request->get_json_params() ?: [];
         if (array_key_exists('email_template_id', $body)) {
             $template_id = sanitize_key((string) $body['email_template_id']);
             if ($template_id !== '' && !WKEL_Email_Templates::find($template_id)) {
