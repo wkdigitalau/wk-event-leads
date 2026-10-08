@@ -408,6 +408,14 @@ class WKEL_Submission {
             }
         }
 
+        if (array_key_exists('email_template_id', $body)) {
+            $template_id = sanitize_key((string) $body['email_template_id']);
+            if ($template_id !== '' && !WKEL_Email_Templates::find($template_id)) {
+                return new WP_REST_Response(['success' => false, 'message' => 'Invalid email template.'], 422);
+            }
+            update_post_meta($lead_id, '_wkel_email_template_id', $template_id);
+        }
+
         foreach (['service_interest', 'owner', 'priority', 'loss_reason', 'next_action'] as $meta_key) {
             if (array_key_exists($meta_key, $body)) {
                 update_post_meta($lead_id, '_wkel_' . $meta_key, sanitize_text_field($body[$meta_key]));
@@ -447,6 +455,15 @@ class WKEL_Submission {
 
         if (get_post_type($lead_id) !== 'wkel_lead') {
             return new WP_REST_Response(['success' => false, 'message' => 'Lead not found.'], 404);
+        }
+
+        $body = $request->get_json_params();
+        if (array_key_exists('email_template_id', $body)) {
+            $template_id = sanitize_key((string) $body['email_template_id']);
+            if ($template_id !== '' && !WKEL_Email_Templates::find($template_id)) {
+                return new WP_REST_Response(['success' => false, 'message' => 'Invalid email template.'], 422);
+            }
+            update_post_meta($lead_id, '_wkel_email_template_id', $template_id);
         }
 
         update_post_meta($lead_id, '_wkel_email_status', 'queued');
