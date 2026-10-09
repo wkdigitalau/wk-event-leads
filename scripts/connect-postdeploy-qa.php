@@ -1,0 +1,45 @@
+<?php
+// Explicitly authorised Connect post-deployment checks: dummy records, dry-run only.
+if (home_url() !== 'https://connect.digitalp.com.au' || !defined('WKEL_VERSION') || WKEL_VERSION !== '1.4.1') throw new RuntimeException('Wrong installation/version');
+if (!defined('WKEL_OUTREACH_ALLOW_LIVE') || WKEL_OUTREACH_ALLOW_LIVE !== false || get_option('wkel_outreach_dry_run') !== '1') throw new RuntimeException('Delivery must be locked');
+$http = 0;
+add_filter('pre_http_request', function() use (&$http) { $http++; return new WP_Error('qa_blocked', 'QA network blocked'); }, PHP_INT_MAX, 3);
+add_filter('pre_wp_mail', '__return_true', PHP_INT_MAX);
+$admins = get_users(['role'=>'administrator','number'=>1,'fields'=>'ID']);
+if (!$admins) throw new RuntimeException('Administrator required');
+wp_set_current_user((int)$admins[0]);
+if (!current_user_can('manage_options')) throw new RuntimeException('Administrator capability required');
+$GLOBALS['wkel_demo_count'] = 0;
+function wkel_check($ok, $label) {  if (!$ok) throw new RuntimeException('FAIL: '.$label); $GLOBALS['wkel_demo_count']++; echo 'PASS: '.$label.PHP_EOL; }
+wkel_check(get_option('wkel_outreach_migrated') === '1', 'Migration complete');
+wkel_check(is_email(get_option('wkel_email_from_address','')), 'Site sender configured');
+update_option('wkel_outreach_enabled','1');
+$tag = gmdate('YmdHis');
+$email = 'dummy-demo-'.$tag.'@example.invalid';
+$lead = WKEL_Submission::create_lead(['wkel_name'=>'Dummy Demo Contact','wkel_email'=>$email,'wkel_organisation'=>'Dummy Demo Organisation'], 'qa-demo', '', 'connect-demo', 'other');
+wkel_check(is_int($lead), 'Dummy contact created');
+update_post_meta($lead,'_wkel_outreach_enrolled','1');
+wkel_check(get_post_meta($lead,'_wkel_outreach_status',true)==='draft', 'Create remains draft');
+$template = WKEL_Outreach::save_template(0,'Dummy demo — dry run only','Hello {{first_name}} — Elite Nurse Partners','<div style="font-family:Arial;color:#183849;padding:24px"><h1>Elite Nurse Partners</h1><p>Hello {{first_name}},</p><p>This is a dummy demonstration for {{organisation}}. No email will be delivered.</p><p><a href="{{unsubscribe_url}}">Unsubscribe</a></p></div>');
+wkel_check(is_int($template), 'Demo template saved without sending');
+wkel_check(is_wp_error(WKEL_Outreach::preview($lead,$template)), 'Unapproved template rejected');
+wkel_check(WKEL_Outreach::approve($template)===true, 'Demo template explicitly approved');
+$preview = WKEL_Outreach::preview($lead,$template);
+wkel_check(is_array($preview) && str_contains($preview['payload']['html'],'Dummy Demo Organisation'), 'Merged formatted preview');
+$result = WKEL_Outreach::send($preview['token']);
+wkel_check(is_string($result) && str_contains($result,'Dry run'), 'Explicit Send stays dry-run');
+$messages = WKEL_Outreach_Store::messages($lead);
+wkel_check(count($messages)===1 && $messages[0]['mode']==='dry_run' && empty($messages[0]['resend_id']), 'Dry-run history with no provider ID');
+wkel_check(is_wp_error(WKEL_Outreach::send($preview['token'])), 'Repeat Send rejected');
+WKEL_Submission::log_activity($lead,'note','Dummy QA follow-up note; no email sent.');
+$optout = WKEL_Submission::create_lead(['wkel_name'=>'Dummy Suppression Contact','wkel_email'=>'dummy-optout-'.$tag.'@example.invalid','wkel_organisation'=>'Dummy'], 'qa-demo', '', 'connect-demo', 'other');
+update_post_meta($optout,'_wkel_outreach_enrolled','1');
+$pre = WKEL_Outreach::preview($optout,$template);
+WKEL_Campaign::suppress_email(WKEL_Email::get_lead_email($optout),'dummy_demo_qa');
+wkel_check(is_wp_error(WKEL_Outreach::send($pre['token'])), 'Opt-out after preview blocks Send');
+$import = new ReflectionMethod(WKEL_Campaign::class,'upsert_campaign_contact'); $import->setAccessible(true);
+$imported = $import->invoke(null,['email'=>'dummy-import-'.$tag.'@example.invalid','name'=>'Dummy Imported Contact','organisation'=>'Dummy','campaign'=>'connect-demo','list_type'=>'mixed','segment'=>'demo','role'=>'Dummy']);
+wkel_check((int)$imported>0 && get_post_meta($imported,'_wkel_outreach_status',true)==='draft', 'Campaign import stages dummy record');
+wkel_check($http===0, 'Zero external email/HTTP requests');
+wkel_check(WKEL_OUTREACH_ALLOW_LIVE===false && get_option('wkel_outreach_dry_run')==='1', 'Server and UI delivery locks retained');
+echo 'RESULT: '.$GLOBALS['wkel_demo_count']." Connect dummy checks passed. Demo lead=$lead template=$template imported=$imported suppression=$optout".PHP_EOL;
