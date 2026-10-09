@@ -59,5 +59,5 @@ jobs:
             php /tmp/wkel-ci/wp-cli.phar plugin activate wk-event-leads --path=/tmp/wkel-ci/wordpress
             php /tmp/wkel-ci/wp-cli.phar eval 'echo WKEL_VERSION;' --path=/tmp/wkel-ci/wordpress
             php tests/integration.php /tmp/wkel-ci/wordpress
-            for mode in missing blank invalid mismatch configured forbidden; do php tests/google.php /tmp/wkel-ci/wordpress "$mode"; done
+            for mode in missing blank invalid mismatch configured forbidden delegated delegated-mismatch; do php tests/google.php /tmp/wkel-ci/wordpress "$mode"; done
           done

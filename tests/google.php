@@ -1,9 +1,10 @@
 <?php
 $site = getenv('WKEL_QA_SITE') ?: 'connect';
 $mode = $argv[2] ?? 'configured';
+if (in_array($mode, ['delegated', 'delegated-mismatch'], true)) define('WKEL_INSIGHTS_SITE_URL', 'https://measured-site.wkel.test');
 if ($mode !== 'missing') {
     define('WKEL_GA4_PROPERTY_ID', $mode === 'invalid' ? 'invalid' : ($mode === 'blank' ? '' : ['connect' => '101', 'cofo' => '202', 'wkdigital' => '303'][$site]));
-    define('WKEL_SEARCH_CONSOLE_SITE_URL', $mode === 'mismatch' ? 'https://other-site.invalid/' : 'sc-domain:' . $site . '.wkel.test');
+    define('WKEL_SEARCH_CONSOLE_SITE_URL', in_array($mode, ['mismatch', 'delegated-mismatch'], true) ? 'https://other-site.invalid/' : ($mode === 'delegated' ? 'sc-domain:measured-site.wkel.test' : 'sc-domain:' . $site . '.wkel.test'));
     $key = openssl_pkey_new(['private_key_bits' => 2048]); openssl_pkey_export($key, $private);
     // Generated dummy key exists only in memory and has no access to any Google account.
     define('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON', wp_dummy_json($private, $site));
@@ -23,7 +24,7 @@ $method = new ReflectionMethod(WKEL_Insights::class, 'google_metrics'); $method-
 $result = $method->invoke(null, 30);
 if (in_array($mode, ['missing', 'blank'], true)) {
     if ($result !== ['configured' => false] || $calls) throw new RuntimeException('Missing config must make zero calls');
-} elseif (in_array($mode, ['invalid', 'mismatch'], true)) {
+} elseif (in_array($mode, ['invalid', 'mismatch', 'delegated-mismatch'], true)) {
     if (!is_wp_error($result) || $calls) throw new RuntimeException('Invalid site config must fail without calls');
 } elseif ($mode === 'forbidden') {
     if (!is_wp_error($result) || str_contains($result->get_error_message(), 'dummy-secret')) throw new RuntimeException('Provider error must be redacted');

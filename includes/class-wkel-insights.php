@@ -103,6 +103,7 @@ class WKEL_Insights {
                 <h2><?php esc_html_e('Google connection', 'wk-event-leads'); ?></h2>
                 <p><?php esc_html_e('Secrets stay outside the plugin repository. The service account only needs read access.', 'wk-event-leads'); ?></p>
                 <table><tbody>
+                    <tr><th>Reporting site</th><td><?php echo esc_html(defined('WKEL_INSIGHTS_SITE_URL') && trim((string) WKEL_INSIGHTS_SITE_URL) !== '' ? (string) WKEL_INSIGHTS_SITE_URL : home_url()); ?></td></tr>
                     <tr><th>GA4 property</th><td><?php echo esc_html(defined('WKEL_GA4_PROPERTY_ID') && trim((string) WKEL_GA4_PROPERTY_ID) !== '' ? (string) WKEL_GA4_PROPERTY_ID : 'Not configured'); ?></td></tr>
                     <tr><th>Search Console property</th><td><?php echo esc_html(defined('WKEL_SEARCH_CONSOLE_SITE_URL') && trim((string) WKEL_SEARCH_CONSOLE_SITE_URL) !== '' ? (string) WKEL_SEARCH_CONSOLE_SITE_URL : 'Not configured'); ?></td></tr>
                     <tr><th>Service account</th><td><?php echo esc_html(defined('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON') && trim((string) WKEL_GOOGLE_SERVICE_ACCOUNT_JSON) !== '' ? 'Configured (credentials hidden)' : 'Not configured'); ?></td></tr>
@@ -199,11 +200,13 @@ class WKEL_Insights {
         }
 
         if (!ctype_digit((string) WKEL_GA4_PROPERTY_ID)) return new WP_Error('wkel_google_property', 'GA4 property ID must be numeric.');
-        $site_host = strtolower((string) wp_parse_url(home_url(), PHP_URL_HOST));
+        $reporting_site = defined('WKEL_INSIGHTS_SITE_URL') && trim((string) WKEL_INSIGHTS_SITE_URL) !== '' ? (string) WKEL_INSIGHTS_SITE_URL : home_url();
+        $site_host = strtolower((string) wp_parse_url($reporting_site, PHP_URL_HOST));
+        if (!in_array(wp_parse_url($reporting_site, PHP_URL_SCHEME), ['http', 'https'], true) || !$site_host) return new WP_Error('wkel_google_site', 'Reporting site URL is invalid.');
         $property = (string) WKEL_SEARCH_CONSOLE_SITE_URL;
         $property_host = str_starts_with($property, 'sc-domain:') ? strtolower(substr($property, 10)) : strtolower((string) wp_parse_url($property, PHP_URL_HOST));
         if (!$property_host || ($site_host !== $property_host && !(str_starts_with($property, 'sc-domain:') && str_ends_with($site_host, '.' . $property_host)))) {
-            return new WP_Error('wkel_google_site', 'Search Console property does not match this installation.');
+            return new WP_Error('wkel_google_site', 'Search Console property does not match the configured reporting site.');
         }
         $token = self::google_token();
         if (is_wp_error($token)) return $token;
