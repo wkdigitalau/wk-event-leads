@@ -59,7 +59,7 @@ class WKEL_Campaign {
                 continue;
             }
 
-            $marketing_status = get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'subscribed';
+            $marketing_status = get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'unknown';
             $email_status     = get_post_meta($lead_id, '_wkel_email_status', true) ?: '';
             $items[] = [
                 'email'            => $email,
@@ -108,7 +108,7 @@ class WKEL_Campaign {
         $suppression_nonce = wp_create_nonce('wkel_export_suppression_csv');
         ?>
         <div class="wrap wkel-admin">
-            <h1><?php esc_html_e('Cold Outreach Campaigns', 'wk-event-leads'); ?></h1>
+            <h1><?php esc_html_e('Campaign imports', 'wk-event-leads'); ?></h1>
 
             <?php if ($imported !== null): ?>
                 <div class="notice notice-success is-dismissible">
@@ -137,7 +137,7 @@ class WKEL_Campaign {
                     <tr>
                         <th><label for="wkel_default_campaign"><?php esc_html_e('Default campaign', 'wk-event-leads'); ?></label></th>
                         <td>
-                            <input type="text" id="wkel_default_campaign" name="wkel_default_campaign" value="agentic-cosec" class="regular-text">
+                            <input type="text" id="wkel_default_campaign" name="wkel_default_campaign" value="outreach" class="regular-text">
                             <p class="description"><?php esc_html_e('Used when the CSV does not include a campaign column.', 'wk-event-leads'); ?></p>
                         </td>
                     </tr>
@@ -186,18 +186,18 @@ class WKEL_Campaign {
             wp_die(__('Invalid nonce.', 'wk-event-leads'));
         }
         if (empty($_FILES['wkel_campaign_csv']['tmp_name']) || !is_uploaded_file($_FILES['wkel_campaign_csv']['tmp_name'])) {
-            wp_safe_redirect(admin_url('admin.php?page=wkel_campaigns&imported=0&skipped=1'));
+            wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&imported=0&skipped=1'));
             exit;
         }
 
-        $default_campaign = sanitize_key($_POST['wkel_default_campaign'] ?? 'agentic-cosec');
+        $default_campaign = sanitize_key($_POST['wkel_default_campaign'] ?? 'outreach');
         $default_list_type = sanitize_key($_POST['wkel_default_list_type'] ?? 'for_profit');
         $handle = fopen($_FILES['wkel_campaign_csv']['tmp_name'], 'r');
         $imported = 0;
         $skipped = 0;
 
         if (!$handle) {
-            wp_safe_redirect(admin_url('admin.php?page=wkel_campaigns&imported=0&skipped=1'));
+            wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&imported=0&skipped=1'));
             exit;
         }
 
@@ -208,7 +208,7 @@ class WKEL_Campaign {
             $data = self::row_to_assoc($headers, $row);
             $email = sanitize_email($data['email'] ?? $data['email_address'] ?? '');
 
-            if (!$email || self::is_email_suppressed($email)) {
+            if (!$email || WKEL_Outreach_Store::blocked(0, $email)) {
                 $skipped++;
                 continue;
             }
@@ -231,7 +231,7 @@ class WKEL_Campaign {
         }
 
         fclose($handle);
-        wp_safe_redirect(admin_url('admin.php?page=wkel_campaigns&imported=' . $imported . '&skipped=' . $skipped));
+        wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&imported=' . $imported . '&skipped=' . $skipped));
         exit;
     }
 
@@ -242,6 +242,7 @@ class WKEL_Campaign {
         }
 
         $email = sanitize_email($_GET['email'] ?? '');
+        $contact = sanitize_key($_GET['contact'] ?? '');
         $token = sanitize_text_field($_GET['token'] ?? '');
         $message = '';
         $success = false;
@@ -259,6 +260,11 @@ class WKEL_Campaign {
                     $message = __('You have been opted out. We will not send further marketing emails to this address.', 'wk-event-leads');
                 }
             }
+        } elseif (preg_match('/^[a-f0-9]{64}$/', $contact) && $token && hash_equals(self::hash_unsubscribe_token($contact), $token)) {
+            WKEL_Outreach_Store::suppress_hash($contact, 'unsubscribed', 'signed_link');
+            self::mark_hash_unsubscribed($contact, 'signed_link');
+            $success = true;
+            $message = __('You have been opted out. We will not send further marketing emails to this address.', 'wk-event-leads');
         } elseif ($email && self::verify_unsubscribe_token($email, $token)) {
             self::suppress_email($email, 'signed_link');
             $success = true;
@@ -279,46 +285,28 @@ class WKEL_Campaign {
 
         return add_query_arg(
             [
-                'email' => $email,
-                'token' => self::unsubscribe_token($email),
+                'contact' => self::email_hash($email),
+                'token' => self::hash_unsubscribe_token(self::email_hash($email)),
             ],
             self::unsubscribe_page_url()
         );
     }
 
     public static function unsubscribe_page_url(): string {
-        $public_url = get_option('wkel_public_unsubscribe_url', 'https://wkdigital.com.au/unsubscribe/');
-        $public_url = esc_url_raw($public_url);
-
-        return $public_url ?: home_url('/unsubscribe/');
+        // Opt-outs must be processed in this installation.
+        return home_url('/unsubscribe/');
     }
 
     public static function is_lead_suppressed(int $lead_id): bool {
-        return get_post_meta($lead_id, '_wkel_marketing_status', true) === 'unsubscribed';
+        return WKEL_Outreach_Store::blocked($lead_id, WKEL_Email::get_lead_email($lead_id)) !== '';
     }
 
     public static function is_email_suppressed(string $email): bool {
-        $hash = self::email_hash($email);
-        if (!$hash) {
-            return false;
-        }
-
-        $existing = get_posts([
-            'post_type'      => 'wkel_lead',
-            'posts_per_page' => 1,
-            'post_status'    => 'publish',
-            'meta_query'     => [
-                'relation' => 'AND',
-                ['key' => '_wkel_email_hash', 'value' => $hash],
-                ['key' => '_wkel_marketing_status', 'value' => 'unsubscribed'],
-            ],
-            'fields'         => 'ids',
-        ]);
-
-        return !empty($existing);
+        return WKEL_Outreach_Store::blocked(0, $email) !== '';
     }
 
     public static function suppress_email(string $email, string $source = 'manual'): int {
+        WKEL_Outreach_Store::suppress($email, 'unsubscribed', $source);
         $hash = self::email_hash($email);
         $lead_id = self::find_lead_by_email_hash($hash);
 
@@ -339,10 +327,28 @@ class WKEL_Campaign {
             update_post_meta($lead_id, '_wkel_unsubscribed_at', time());
             update_post_meta($lead_id, '_wkel_unsubscribe_source', sanitize_key($source));
             update_post_meta($lead_id, '_wkel_email_status', 'unsubscribed');
+            update_post_meta($lead_id, '_wkel_outreach_status', 'suppressed');
             WKEL_Submission::log_activity($lead_id, 'unsubscribed', 'Contact opted out of marketing emails.');
         }
 
+        self::mark_hash_unsubscribed($hash, $source);
         return (int) $lead_id;
+    }
+
+    private static function mark_hash_unsubscribed(string $hash, string $source): void {
+        $ids = get_posts(['post_type' => 'wkel_lead', 'post_status' => ['publish', 'draft', 'private', 'pending', 'trash'],
+            'posts_per_page' => -1, 'fields' => 'ids', 'meta_query' => [['key' => '_wkel_email_hash', 'value' => $hash]]]);
+        foreach ($ids as $id) {
+            update_post_meta($id, '_wkel_marketing_status', 'unsubscribed');
+            update_post_meta($id, '_wkel_outreach_status', 'suppressed');
+            update_post_meta($id, '_wkel_unsubscribed_at', time());
+            update_post_meta($id, '_wkel_unsubscribe_source', sanitize_key($source));
+            WKEL_Submission::log_activity($id, 'unsubscribed', 'Contact opted out of marketing emails.');
+        }
+    }
+
+    private static function hash_unsubscribe_token(string $hash): string {
+        return hash_hmac('sha256', 'outreach:' . home_url() . ':' . $hash, wp_salt('auth'));
     }
 
     public static function export_suppression_csv(): void {
@@ -420,18 +426,20 @@ class WKEL_Campaign {
             update_post_meta($lead_id, '_wkel_' . $field['id'], $value);
         }
 
-        $first_stage = WKEL_Schema::get_stage('contacted') ? 'contacted' : (WKEL_Schema::get_first_stage()['id'] ?? 'new');
+        $first_stage = WKEL_Schema::get_first_stage()['id'] ?? 'new';
         update_post_meta($lead_id, '_wkel_email_hash', $hash);
-        update_post_meta($lead_id, '_wkel_event', sanitize_key($contact['campaign'] ?? 'agentic-cosec'));
+        update_post_meta($lead_id, '_wkel_event', sanitize_key($contact['campaign'] ?? 'outreach'));
         update_post_meta($lead_id, '_wkel_stage', get_post_meta($lead_id, '_wkel_stage', true) ?: $first_stage);
         update_post_meta($lead_id, '_wkel_source', 'cold_email');
-        update_post_meta($lead_id, '_wkel_campaign', sanitize_key($contact['campaign'] ?? 'agentic-cosec'));
+        update_post_meta($lead_id, '_wkel_campaign', sanitize_key($contact['campaign'] ?? 'outreach'));
         update_post_meta($lead_id, '_wkel_list_type', sanitize_key($contact['list_type'] ?? ''));
         update_post_meta($lead_id, '_wkel_segment', sanitize_text_field($contact['segment'] ?? ''));
         update_post_meta($lead_id, '_wkel_role', sanitize_text_field($contact['role'] ?? ''));
-        update_post_meta($lead_id, '_wkel_marketing_status', get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'subscribed');
+        update_post_meta($lead_id, '_wkel_marketing_status', get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'unknown');
         update_post_meta($lead_id, '_wkel_imported_at', get_post_meta($lead_id, '_wkel_imported_at', true) ?: time());
-        update_post_meta($lead_id, '_wkel_email_status', get_post_meta($lead_id, '_wkel_email_status', true) ?: 'not_sent');
+        update_post_meta($lead_id, '_wkel_email_status', get_post_meta($lead_id, '_wkel_email_status', true) ?: 'draft');
+        update_post_meta($lead_id, '_wkel_outreach_status', get_post_meta($lead_id, '_wkel_outreach_status', true) ?: 'draft');
+        update_post_meta($lead_id, '_wkel_outreach_enrolled', '1');
         update_post_meta($lead_id, '_wkel_submitted_at', get_post_meta($lead_id, '_wkel_submitted_at', true) ?: time());
 
         WKEL_Submission::log_activity($lead_id, 'campaign_imported', 'Contact added or updated for cold outreach campaign tracking.');
@@ -447,13 +455,14 @@ class WKEL_Campaign {
         <head>
             <meta charset="<?php bloginfo('charset'); ?>">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title><?php esc_html_e('Unsubscribe - WK Digital', 'wk-event-leads'); ?></title>
-            <?php wp_head(); ?>
+            <title><?php echo esc_html(sprintf(__('Unsubscribe - %s', 'wk-event-leads'), get_bloginfo('name'))); ?></title>
+            <meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer">
+            <!-- Standalone opt-out page: no theme scripts or analytics hooks. -->
         </head>
         <body <?php body_class('wkel-unsubscribe-page'); ?>>
             <main style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f7f8;padding:32px 16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
                 <section style="width:100%;max-width:560px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:32px;box-shadow:0 18px 45px rgba(7,21,26,.08);">
-                    <p style="margin:0 0 10px;color:#1E6FBF;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;"><?php esc_html_e('WK Digital', 'wk-event-leads'); ?></p>
+                    <p style="margin:0 0 10px;color:#1E6FBF;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;"><?php echo esc_html(get_bloginfo('name')); ?></p>
                     <h1 style="margin:0 0 16px;color:#07151a;font-size:30px;line-height:1.15;"><?php esc_html_e('Marketing opt-out', 'wk-event-leads'); ?></h1>
                     <p style="margin:0 0 22px;color:#4b5563;line-height:1.6;"><?php esc_html_e('Enter your email address and we will suppress it from future marketing campaigns.', 'wk-event-leads'); ?></p>
 
@@ -473,7 +482,7 @@ class WKEL_Campaign {
                     <?php endif; ?>
                 </section>
             </main>
-            <?php wp_footer(); ?>
+
         </body>
         </html>
         <?php

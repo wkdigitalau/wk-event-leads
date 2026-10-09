@@ -105,7 +105,7 @@ class WKEL_Submission {
 
     public static function handle(WP_REST_Request $request): WP_REST_Response {
         $body        = $request->get_json_params();
-        $silent_ok   = new WP_REST_Response(['success' => true, 'message' => get_option('wkel_success_message', 'Thanks — check your inbox.')]);
+        $silent_ok   = new WP_REST_Response(['success' => true, 'message' => get_option('wkel_success_message', 'Thanks — your details have been received.')]);
         $admin_submit = sanitize_key($body['source'] ?? '') === 'admin' && self::admin_permission();
 
         // 1. Honeypot
@@ -179,16 +179,10 @@ class WKEL_Submission {
             return new WP_REST_Response(['success' => false, 'message' => __('Could not save your submission. Please try again.', 'wk-event-leads')], 500);
         }
 
-        // Queue confirmation email via Action Scheduler if available, otherwise send directly
-        if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time(), 'wkel_send_confirmation_email', ['lead_id' => $lead_id], 'wk-event-leads');
-        } else {
-            WKEL_Email::send_confirmation($lead_id);
-        }
-
+        // Saving a lead never authorises email delivery.
         do_action('wkel_lead_created', $lead_id, $sanitised);
 
-        return new WP_REST_Response(['success' => true, 'message' => get_option('wkel_success_message', 'Thanks — check your inbox.')]);
+        return new WP_REST_Response(['success' => true, 'message' => get_option('wkel_success_message', 'Thanks — your details have been received.')]);
     }
 
     private static function is_duplicate(array $sanitised, string $event): bool {
@@ -276,9 +270,11 @@ class WKEL_Submission {
             '_wkel_event'           => $event,
             '_wkel_stage'           => $stage_id,
             '_wkel_ip_hash'         => hash('sha256', $ip),
-            '_wkel_email_status'    => 'queued',
+            '_wkel_email_status'    => 'draft',
+            '_wkel_outreach_status' => 'draft',
             '_wkel_email_attempts'  => 0,
-            '_wkel_privacy_accepted'=> '1',
+            '_wkel_privacy_accepted'=> $source === 'direct' ? '1' : '0',
+            '_wkel_marketing_status'=> 'unknown',
             '_wkel_submitted_at'    => time(),
             '_wkel_source'          => sanitize_key($source),
             '_wkel_lead_type'       => WKEL_Schema::sanitise_lead_type($lead_type),
@@ -374,6 +370,7 @@ class WKEL_Submission {
                 $value = WKEL_Encryption::encrypt($value);
             }
             update_post_meta($lead_id, '_wkel_' . $id, $value);
+            if ($field['type'] === 'email') update_post_meta($lead_id, '_wkel_email_hash', hash('sha256', strtolower(trim(WKEL_Encryption::decrypt($value)))));
         }
 
         // Stage
@@ -443,22 +440,7 @@ class WKEL_Submission {
     // -------------------------------------------------------------------------
 
     public static function resend_email(WP_REST_Request $request): WP_REST_Response {
-        $lead_id = (int) $request['id'];
-
-        if (get_post_type($lead_id) !== 'wkel_lead') {
-            return new WP_REST_Response(['success' => false, 'message' => 'Lead not found.'], 404);
-        }
-
-        update_post_meta($lead_id, '_wkel_email_status', 'queued');
-        update_post_meta($lead_id, '_wkel_email_attempts', 0);
-
-        if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(time(), 'wkel_send_confirmation_email', ['lead_id' => $lead_id], 'wk-event-leads');
-        } else {
-            WKEL_Email::send_confirmation($lead_id);
-        }
-
-        return new WP_REST_Response(['success' => true]);
+        return new WP_REST_Response(['success' => false, 'message' => 'Use Outreach to preview and explicitly send one email.'], 409);
     }
 
     // -------------------------------------------------------------------------

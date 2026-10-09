@@ -1,0 +1,5 @@
+email,name,organisation,campaign,list_type,segment,role
+browser-csv@example.invalid,CSV Dummy,CSV QA,qa-import,mixed,qa,Tester
+not-an-email,Invalid Dummy,Dummy,qa-import,mixed,qa,Tester
+browser-dummy@example.invalid,Opted Out Dummy,Dummy,qa-import,mixed,qa,Tester
+dummy-failed@example.invalid,Failed Dummy,Dummy,qa-import,mixed,qa,Tester

@@ -161,7 +161,7 @@ class WKEL_Pipeline {
             'lead_type'    => get_post_meta($lead_id, '_wkel_lead_type', true) ?: 'sales',
             'campaign'     => get_post_meta($lead_id, '_wkel_campaign', true),
             'list_type'    => get_post_meta($lead_id, '_wkel_list_type', true),
-            'marketing_status' => get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'subscribed',
+            'marketing_status' => get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'unknown',
             'unsubscribed_at' => (int) get_post_meta($lead_id, '_wkel_unsubscribed_at', true),
             'submitted_at' => (int) get_post_meta($lead_id, '_wkel_submitted_at', true),
             'admin_notes'  => get_post_meta($lead_id, '_wkel_admin_notes', true),

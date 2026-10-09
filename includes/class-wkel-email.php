@@ -3,147 +3,28 @@ defined('ABSPATH') || exit;
 
 class WKEL_Email {
 
-    private const MAX_ATTEMPTS = 3;
-    private const RETRY_DELAY  = 300; // 5 minutes
-
     /**
      * Action Scheduler callback: wkel_send_confirmation_email
      */
     public static function send_confirmation(int $lead_id): void {
-        if (get_post_type($lead_id) !== 'wkel_lead') {
-            return;
-        }
-
-        if (class_exists('WKEL_Campaign') && WKEL_Campaign::is_lead_suppressed($lead_id)) {
-            update_post_meta($lead_id, '_wkel_email_status', 'unsubscribed');
-            WKEL_Submission::log_activity($lead_id, 'email_suppressed', 'Email was not sent because the contact has opted out.');
-            return;
-        }
-
-        $attempts = (int) get_post_meta($lead_id, '_wkel_email_attempts', true);
-
-        if ($attempts >= self::MAX_ATTEMPTS) {
-            update_post_meta($lead_id, '_wkel_email_status', 'failed');
-            do_action('wkel_email_failed', $lead_id);
-            return;
-        }
-
-        update_post_meta($lead_id, '_wkel_email_attempts', $attempts + 1);
-
-        $payload = self::build_payload($lead_id);
-
-        if (!$payload) {
-            // Missing configuration — don't retry
-            update_post_meta($lead_id, '_wkel_email_status', 'failed');
-            do_action('wkel_email_failed', $lead_id);
-            return;
-        }
-
-        $payload = apply_filters('wkel_email_payload', $payload, $lead_id);
-
-        $api_key = WKEL_Encryption::decrypt(get_option('wkel_resend_key', ''));
-
-        if (!$api_key) {
-            update_post_meta($lead_id, '_wkel_email_status', 'failed');
-            do_action('wkel_email_failed', $lead_id);
-            return;
-        }
-
-        $response = wp_remote_post('https://api.resend.com/emails', [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $api_key,
-                'Content-Type'  => 'application/json',
-                'Idempotency-Key'=> 'wkel-lead-' . $lead_id . '-confirmation',
-            ],
-            'body'    => wp_json_encode($payload),
-            'timeout' => 15,
-        ]);
-
-        if (is_wp_error($response)) {
-            self::schedule_retry($lead_id);
-            return;
-        }
-
-        $code = wp_remote_retrieve_response_code($response);
-
-        if ($code >= 200 && $code < 300) {
-            $response_body = json_decode(wp_remote_retrieve_body($response), true) ?: [];
-            update_post_meta($lead_id, '_wkel_email_status', 'sent');
-            update_post_meta($lead_id, '_wkel_email_sent_at', time());
-            if (!empty($response_body['id'])) {
-                update_post_meta($lead_id, '_wkel_resend_email_id', sanitize_text_field($response_body['id']));
-            }
-            WKEL_Submission::log_activity($lead_id, 'email_sent', 'Confirmation email sent through Resend.', !empty($response_body['id']) ? $response_body['id'] : null);
-            do_action('wkel_email_sent', $lead_id);
-        } else {
-            self::schedule_retry($lead_id);
+        // Legacy scheduled actions must never send without a preview authorisation.
+        if (get_post_type($lead_id) === 'wkel_lead') {
+            WKEL_Outreach_Store::audit($lead_id, 0, 'legacy_send_blocked');
+            WKEL_Submission::log_activity($lead_id, 'legacy_send_blocked', 'Legacy automatic email blocked. Use Outreach.');
         }
     }
 
-    private static function schedule_retry(int $lead_id): void {
-        $attempts = (int) get_post_meta($lead_id, '_wkel_email_attempts', true);
-
-        if ($attempts >= self::MAX_ATTEMPTS) {
-            update_post_meta($lead_id, '_wkel_email_status', 'failed');
-            WKEL_Submission::log_activity($lead_id, 'email_failed', 'Email delivery failed after ' . self::MAX_ATTEMPTS . ' attempts.');
-            do_action('wkel_email_failed', $lead_id);
-            return;
-        }
-
-        if (function_exists('as_schedule_single_action')) {
-            as_schedule_single_action(
-                time() + self::RETRY_DELAY,
-                'wkel_send_confirmation_email',
-                ['lead_id' => $lead_id],
-                'wk-event-leads'
-            );
-        }
-    }
-
-    private static function build_payload(int $lead_id): ?array {
-        $to_email = self::get_lead_email($lead_id);
-        if (!$to_email) {
-            return null;
-        }
-
-        $from_name    = sanitize_text_field(get_option('wkel_email_from_name', ''));
-        $from_address = sanitize_email(get_option('wkel_email_from_address', ''));
-        $reply_to     = sanitize_email(get_option('wkel_email_reply_to', ''));
-        $subject      = sanitize_text_field(get_option('wkel_email_subject', 'Great connecting with you today'));
-
-        if (!$from_address) {
-            return null;
-        }
-
-        $vars    = self::build_template_vars($lead_id);
-        $vars    = apply_filters('wkel_email_template_vars', $vars, $lead_id);
-        $body    = self::replace_template_vars(get_option('wkel_email_body', ''), $vars);
-
-        $payload = [
-            'from'    => $from_name ? $from_name . ' <' . $from_address . '>' : $from_address,
-            'to'      => [$to_email],
-            'subject' => $subject,
-            'html'    => $body,
-        ];
-
-        if ($reply_to) {
-            $payload['reply_to'] = [$reply_to];
-        }
-
-        return $payload;
-    }
-
-    private static function get_lead_email(int $lead_id): string {
+    public static function get_lead_email(int $lead_id): string {
         foreach (WKEL_Schema::get_fields() as $field) {
             if ($field['type'] === 'email') {
                 $raw = get_post_meta($lead_id, '_wkel_' . $field['id'], true);
-                return WKEL_Encryption::decrypt($raw);
+                return sanitize_email(WKEL_Encryption::decrypt((string) $raw));
             }
         }
         return '';
     }
 
-    private static function build_template_vars(int $lead_id): array {
+    public static function build_template_vars(int $lead_id): array {
         $fields   = WKEL_Schema::get_fields();
         $vars     = [];
 
@@ -188,7 +69,7 @@ class WKEL_Email {
         return $vars;
     }
 
-    private static function replace_template_vars(string $template, array $vars): string {
+    public static function replace_template_vars(string $template, array $vars): string {
         foreach ($vars as $key => $value) {
             $template = str_replace('{{' . $key . '}}', esc_html($value), $template);
             // URLs should not be double-escaped — replace again without esc_html
@@ -203,56 +84,7 @@ class WKEL_Email {
      * Send a test email to the admin address.
      */
     public static function send_test(string $to_email): bool|string {
-        $api_key = WKEL_Encryption::decrypt(get_option('wkel_resend_key', ''));
-        if (!$api_key) {
-            return 'Resend API key is not configured.';
-        }
-
-        $from_address = sanitize_email(get_option('wkel_email_from_address', ''));
-        if (!$from_address) {
-            return 'From email address is not configured.';
-        }
-
-        $sample_vars = [
-            'first_name'   => 'Test',
-            'full_name'    => 'Test User',
-            'organisation' => 'Test Organisation',
-            'event_name'   => 'Test Event',
-            'atncs_url'    => get_option('wkel_atncs_url', 'https://example.com'),
-            'enp_url'      => get_option('wkel_enp_url', 'https://example.com'),
-            'sender_name'  => get_option('wkel_sender_name', 'Test Sender'),
-            'sender_phone' => get_option('wkel_sender_phone', ''),
-            'sender_email' => get_option('wkel_sender_email', ''),
-            'unsubscribe_url' => home_url('/unsubscribe/'),
-        ];
-
-        $body    = self::replace_template_vars(get_option('wkel_email_body', 'Test email from WK Event Leads.'), $sample_vars);
-        $subject = '[TEST] ' . sanitize_text_field(get_option('wkel_email_subject', 'Test Email'));
-
-        $from_name = sanitize_text_field(get_option('wkel_email_from_name', ''));
-        $payload = [
-            'from'    => $from_name ? $from_name . ' <' . $from_address . '>' : $from_address,
-            'to'      => [$to_email],
-            'subject' => $subject,
-            'html'    => $body,
-        ];
-
-        $response = wp_remote_post('https://api.resend.com/emails', [
-            'headers' => [
-                'Authorization' => 'Bearer ' . $api_key,
-                'Content-Type'  => 'application/json',
-                'Idempotency-Key'=> 'wkel-test-' . wp_generate_uuid4(),
-            ],
-            'body'    => wp_json_encode($payload),
-            'timeout' => 15,
-        ]);
-
-        if (is_wp_error($response)) {
-            return $response->get_error_message();
-        }
-
-        $code = wp_remote_retrieve_response_code($response);
-        return ($code >= 200 && $code < 300) ? true : 'Resend error (HTTP ' . $code . '): ' . wp_remote_retrieve_body($response);
+        return 'Live test delivery is disabled. Use Outreach preview and dry-run mode.';
     }
 
     /**
@@ -273,6 +105,7 @@ class WKEL_Email {
         $secret_bytes = str_starts_with($secret, 'whsec_')
             ? base64_decode(substr($secret, 6), true)
             : $secret;
+        if ($secret_bytes === false || $secret_bytes === '') return new WP_REST_Response(['success' => false], 401);
         $signed = $svix_id . '.' . $svix_timestamp . '.' . $body;
         $expected = base64_encode(hash_hmac('sha256', $signed, (string) $secret_bytes, true));
         $valid = false;
@@ -297,7 +130,11 @@ class WKEL_Email {
         $data = is_array($event['data'] ?? null) ? $event['data'] : [];
 
         if ($type === 'email.received') {
+            global $wpdb;
+            if ($wpdb->get_var($wpdb->prepare('SELECT id FROM ' . WKEL_Outreach_Store::table('send_audit') . ' WHERE event_id = %s', $event_id))) return new WP_REST_Response(['success' => true, 'duplicate' => true]);
             $lead_id = self::ingest_received_email($data, $event_id);
+            if (!$lead_id) return new WP_REST_Response(['success' => false], 503);
+            WKEL_Outreach_Store::audit($lead_id, 0, 'email_received', '', $event_id);
             return new WP_REST_Response(['success' => true, 'lead_id' => $lead_id]);
         }
 
@@ -305,38 +142,67 @@ class WKEL_Email {
         if (!$email_id) {
             return new WP_REST_Response(['success' => true, 'matched' => false]);
         }
-        $ids = get_posts([
-            'post_type' => 'wkel_lead',
-            'posts_per_page' => 1,
-            'post_status' => 'publish',
-            'meta_query' => [['key' => '_wkel_resend_email_id', 'value' => $email_id]],
-            'fields' => 'ids',
-        ]);
-        if (empty($ids)) {
-            return new WP_REST_Response(['success' => true, 'matched' => false]);
+        global $wpdb;
+        $message_row = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . WKEL_Outreach_Store::table('messages') . ' WHERE resend_id = %s', $email_id), ARRAY_A);
+        $lead_id = $message_row ? (int) $message_row['lead_id'] : 0;
+        if (!$lead_id) {
+            $ids = get_posts(['post_type' => 'wkel_lead', 'posts_per_page' => 1, 'post_status' => ['publish', 'private', 'draft', 'trash'],
+                'meta_query' => [['key' => '_wkel_resend_email_id', 'value' => $email_id]], 'fields' => 'ids']);
+            $lead_id = (int) ($ids[0] ?? 0);
         }
-
-        $lead_id = (int) $ids[0];
-        $labels = [
-            'email.sent' => ['email_sent', 'Resend accepted the email for sending.'],
-            'email.delivered' => ['email_delivered', 'Resend confirmed delivery of the email.'],
-            'email.delivery_delayed' => ['email_delayed', 'Resend reported a delivery delay.'],
-            'email.failed' => ['email_failed', 'Resend reported that the email failed.'],
-            'email.bounced' => ['email_bounced', 'Resend reported that the email bounced.'],
-            'email.complained' => ['email_complained', 'Resend reported a spam complaint.'],
-            'email.opened' => ['email_opened', 'Recipient opened the email.'],
-            'email.clicked' => ['email_clicked', 'Recipient clicked a link in the email.'],
-            'email.suppressed' => ['email_suppressed', 'Resend suppressed the email.'],
+        if (!$lead_id) return new WP_REST_Response(['success' => false, 'matched' => false], 503);
+        $message_id = (int) ($message_row['id'] ?? 0);
+        $at = !empty($event['created_at']) ? strtotime($event['created_at']) : (!empty($data['created_at']) ? strtotime($data['created_at']) : time());
+        $at = $at ?: time();
+        $outcomes = [
+            'email.sent' => ['sent', 'accepted'], 'email.delivered' => ['sent', 'delivered'],
+            'email.delivery_delayed' => ['sent', 'delayed'], 'email.failed' => ['failed', 'failed'],
+            'email.bounced' => ['bounced', 'bounced'], 'email.complained' => ['suppressed', 'complained'],
+            'email.suppressed' => ['suppressed', 'suppressed'],
         ];
-        if (isset($labels[$event['type']])) {
-            [$activity_type, $message] = $labels[$event['type']];
-            WKEL_Submission::log_activity($lead_id, $activity_type, $message, $event_id, !empty($data['created_at']) ? strtotime($data['created_at']) ?: time() : time(), ['resend' => $data]);
+        if (in_array($type, ['email.opened', 'email.clicked'], true)) {
+            if (WKEL_Outreach_Store::audit($lead_id, $message_id, str_replace('.', '_', $type), '', $event_id, $at)) WKEL_Submission::log_activity($lead_id, str_replace('.', '_', $type), 'Resend reported an email engagement event.', $event_id, $at, ['message_id' => $message_id]);
+            return new WP_REST_Response(['success' => true]);
         }
-        if ($type === 'email.delivered') {
-            update_post_meta($lead_id, '_wkel_email_status', 'delivered');
-        } elseif (in_array($type, ['email.failed', 'email.bounced', 'email.complained', 'email.suppressed'], true)) {
-            update_post_meta($lead_id, '_wkel_email_status', 'failed');
+        if (!isset($outcomes[$type])) return new WP_REST_Response(['success' => true, 'ignored' => true]);
+        // Unique event ID prevents duplicate signed deliveries from changing history twice.
+        if (!WKEL_Outreach_Store::audit($lead_id, $message_id, str_replace('.', '_', $type), '', $event_id, $at)) {
+            $existing = $wpdb->get_var($wpdb->prepare('SELECT id FROM ' . WKEL_Outreach_Store::table('send_audit') . ' WHERE event_id = %s', $event_id));
+            return new WP_REST_Response(['success' => (bool) $existing, 'duplicate' => (bool) $existing], $existing ? 200 : 503);
         }
+        [$status, $delivery] = $outcomes[$type];
+        $terminal = in_array($status, ['failed', 'bounced', 'suppressed'], true);
+        if ($terminal || !$message_row || ($at >= (int) $message_row['outcome_at'] && !in_array($message_row['status'], ['failed', 'bounced', 'suppressed'], true))) {
+            if ($message_id) {
+                if ($terminal) {
+                    $exclude = $status === 'failed' ? " AND status NOT IN ('bounced','suppressed')" : ($status === 'bounced' ? " AND status != 'suppressed'" : '');
+                    $wpdb->query($wpdb->prepare('UPDATE ' . WKEL_Outreach_Store::table('messages') . " SET status = %s, delivery = %s, outcome_at = %d WHERE id = %d" . $exclude, $status, $delivery, $at, $message_id));
+                } else {
+                    $wpdb->query($wpdb->prepare('UPDATE ' . WKEL_Outreach_Store::table('messages') . " SET status = %s, delivery = %s, outcome_at = %d WHERE id = %d AND status NOT IN ('failed','bounced','suppressed') AND outcome_at <= %d", $status, $delivery, $at, $message_id, $at));
+                }
+            }
+            if ($message_id) {
+                $actual = $wpdb->get_row($wpdb->prepare('SELECT status,delivery FROM ' . WKEL_Outreach_Store::table('messages') . ' WHERE id = %d', $message_id), ARRAY_A);
+                $status = $actual['status'] ?? $status;
+                $delivery = $actual['delivery'] ?? $delivery;
+                $terminal = in_array($status, ['failed', 'bounced', 'suppressed'], true);
+            }
+            $current = get_post_meta($lead_id, '_wkel_outreach_status', true);
+            $is_latest = !$message_id || (int) $wpdb->get_var($wpdb->prepare('SELECT MAX(id) FROM ' . WKEL_Outreach_Store::table('messages') . " WHERE lead_id = %d AND mode = 'live'", $lead_id)) === $message_id;
+            if ($terminal || ($is_latest && !in_array($current, ['failed', 'bounced', 'suppressed'], true))) {
+                $rank = ['failed' => 1, 'bounced' => 2, 'suppressed' => 3];
+                $summary = ($rank[$current] ?? 0) > ($rank[$status] ?? 0) ? $current : $status;
+                update_post_meta($lead_id, '_wkel_outreach_status', $summary);
+                update_post_meta($lead_id, '_wkel_email_status', $summary);
+            }
+        }
+        if (in_array($status, ['failed', 'bounced', 'suppressed'], true)) {
+            $snapshot = $message_row ? json_decode(WKEL_Encryption::decrypt((string) $message_row['payload']), true) : [];
+            $recipient = $snapshot['to'][0] ?? WKEL_Email::get_lead_email($lead_id);
+            WKEL_Outreach_Store::suppress($recipient, $delivery, 'resend_webhook');
+        }
+        WKEL_Submission::log_activity($lead_id, str_replace('.', '_', $type), 'Resend outcome: ' . $delivery . '.', $event_id, $at,
+            ['message_id' => $message_id, 'resend_id' => $email_id]);
         return new WP_REST_Response(['success' => true, 'matched' => true, 'lead_id' => $lead_id]);
     }
 

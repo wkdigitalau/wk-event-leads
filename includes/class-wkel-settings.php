@@ -59,15 +59,27 @@ class WKEL_Settings {
         if ($value === '••••••••') {
             return get_option('wkel_resend_key', '');
         }
-        return WKEL_Encryption::encrypt($value);
+        if (WKEL_Encryption::is_encrypted($value)) return $value;
+        $encrypted = WKEL_Encryption::encrypt($value);
+        if ($value !== '' && !WKEL_Encryption::is_encrypted($encrypted)) {
+            add_settings_error('wkel_email', 'encryption_required', 'Valid site encryption configuration is required before storing secrets.');
+            return get_option(current_filter() === 'sanitize_option_wkel_resend_key' ? 'wkel_resend_key' : (current_filter() === 'sanitize_option_wkel_cal_webhook_secret' ? 'wkel_cal_webhook_secret' : 'wkel_resend_webhook_secret'), '');
+        }
+        return $encrypted;
     }
 
     public static function sanitise_webhook_secret(string $value): string {
         $value = sanitize_text_field($value);
         if ($value === '••••••••') {
-            return get_option('wkel_resend_webhook_secret', '');
+            return get_option(current_filter() === 'sanitize_option_wkel_cal_webhook_secret' ? 'wkel_cal_webhook_secret' : 'wkel_resend_webhook_secret', '');
         }
-        return WKEL_Encryption::encrypt($value);
+        if (WKEL_Encryption::is_encrypted($value)) return $value;
+        $encrypted = WKEL_Encryption::encrypt($value);
+        if ($value !== '' && !WKEL_Encryption::is_encrypted($encrypted)) {
+            add_settings_error('wkel_email', 'encryption_required', 'Valid site encryption configuration is required before storing secrets.');
+            return get_option(current_filter() === 'sanitize_option_wkel_resend_key' ? 'wkel_resend_key' : (current_filter() === 'sanitize_option_wkel_cal_webhook_secret' ? 'wkel_cal_webhook_secret' : 'wkel_resend_webhook_secret'), '');
+        }
+        return $encrypted;
     }
 
     // -------------------------------------------------------------------------
@@ -253,20 +265,9 @@ class WKEL_Settings {
         </form>
 
         <hr>
-        <h2><?php esc_html_e('Test Email', 'wk-event-leads'); ?></h2>
-        <form method="post">
-            <?php wp_nonce_field('wkel_test_email'); ?>
-            <table class="form-table">
-                <tr>
-                    <th><label for="wkel_test_email_address"><?php esc_html_e('Send test to', 'wk-event-leads'); ?></label></th>
-                    <td>
-                        <input type="email" id="wkel_test_email_address" name="wkel_test_email"
-                               value="<?php echo esc_attr(get_option('admin_email')); ?>" class="regular-text">
-                        <?php submit_button(__('Send Test Email', 'wk-event-leads'), 'secondary', 'wkel_send_test', false); ?>
-                    </td>
-                </tr>
-            </table>
-        </form>
+        <h2>Outreach testing</h2>
+        <p>Email templates above are legacy settings. Manage approved templates and formatted previews in Outreach. Test delivery uses dry-run mode and makes no delivery request.</p>
+        <p><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=wkel_outreach')); ?>">Open Outreach</a></p>
         <?php
     }
 

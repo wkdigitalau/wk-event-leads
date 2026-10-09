@@ -24,6 +24,8 @@ class WKEL_Loader {
             'class-wkel-submission.php',
             'class-wkel-cal-webhook.php',
             'class-wkel-email.php',
+            'class-wkel-outreach-store.php',
+            'class-wkel-outreach.php',
             'class-wkel-campaign.php',
             'class-wkel-pipeline.php',
             'class-wkel-admin.php',
@@ -41,6 +43,8 @@ class WKEL_Loader {
     }
 
     private function define_hooks(): void {
+        $this->add_action('init', 'WKEL_Outreach', 'register', 20, 0);
+
         // CPT
         $this->add_action('init', 'WKEL_CPT', 'register');
         $this->add_action('init', 'WKEL_Schema', 'ensure_stage_defaults', 5, 0);
@@ -67,7 +71,7 @@ class WKEL_Loader {
         if (is_admin()) {
             $this->add_action('admin_menu', 'WKEL_Admin', 'register_menu');
 			$this->add_action('admin_menu', 'WKEL_Insights', 'register_menu');
-            $this->add_action('admin_menu', 'WKEL_Campaign', 'register_admin_menu');
+            $this->add_action('admin_menu', 'WKEL_Outreach', 'menu');
             $this->add_action('admin_enqueue_scripts', 'WKEL_Admin', 'enqueue_assets');
             $this->add_action('admin_menu', 'WKEL_Settings', 'register_menu');
             $this->add_action('admin_init', 'WKEL_Settings', 'register_settings');

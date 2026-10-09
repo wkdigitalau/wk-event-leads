@@ -7,11 +7,17 @@
 
 defined('WP_UNINSTALL_PLUGIN') || exit;
 
+// Preserve lead, template, audit and suppression data on plugin removal.
+// Destructive erasure requires deliberate server-side opt-in.
+if (!defined('WKEL_DELETE_DATA_ON_UNINSTALL') || WKEL_DELETE_DATA_ON_UNINSTALL !== true) return;
+
 // -------------------------------------------------------------------------
 // 1. Remove all wp_options entries
 // -------------------------------------------------------------------------
 
 $options = [
+    'wkel_outreach_schema', 'wkel_outreach_migrated', 'wkel_outreach_migration_offset', 'wkel_outreach_migration_last_id', 'wkel_migration_lock',
+    'wkel_outreach_legacy_template', 'wkel_outreach_enabled', 'wkel_outreach_dry_run',
     'wkel_version',
     'wkel_field_schema',
     'wkel_pipeline_stages',
@@ -49,7 +55,7 @@ foreach ($options as $option) {
 global $wpdb;
 
 $lead_ids = $wpdb->get_col(
-    "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'wkel_lead'"
+    "SELECT ID FROM {$wpdb->posts} WHERE post_type IN ('wkel_lead', 'wkel_template')"
 );
 
 foreach ($lead_ids as $lead_id) {
@@ -61,7 +67,7 @@ if (!empty($lead_ids)) {
     $ids_placeholder = implode(',', array_fill(0, count($lead_ids), '%d'));
     $wpdb->query(
         $wpdb->prepare(
-            "DELETE FROM {$wpdb->posts} WHERE post_type = 'wkel_lead' AND ID IN ($ids_placeholder)",
+            "DELETE FROM {$wpdb->posts} WHERE post_type IN ('wkel_lead', 'wkel_template') AND ID IN ($ids_placeholder)",
             ...$lead_ids
         )
     );
@@ -89,3 +95,7 @@ $wpdb->query(
 // Flush rewrite rules
 flush_rewrite_rules();
 
+
+foreach (['messages', 'send_audit', 'suppression'] as $suffix) {
+    $wpdb->query('DROP TABLE IF EXISTS ' . $wpdb->prefix . 'wkel_' . $suffix);
+}

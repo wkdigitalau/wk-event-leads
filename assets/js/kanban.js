@@ -178,7 +178,7 @@
         // Actions
         html += '<div class="wkel-detail-actions">'
             + '<button class="button button-primary" id="wkel-detail-save" data-lead-id="' + lead.id + '">Save Changes</button>'
-            + '<button class="button" id="wkel-detail-resend" data-lead-id="' + lead.id + '"' + (lead.marketing_status === 'unsubscribed' ? ' disabled' : '') + '>Resend Email</button>'
+            + '<a class="button" href="admin.php?page=wkel_outreach&amp;lead_id=' + lead.id + '">Outreach preview / history</a>'
             + '<button class="button button-link-delete" id="wkel-detail-delete" data-lead-id="' + lead.id + '">Delete</button>'
             + '</div>';
 
@@ -253,13 +253,7 @@
             });
         });
 
-        // Resend email
-        document.getElementById('wkel-detail-resend').addEventListener('click', function () {
-            const id = parseInt(this.dataset.leadId, 10);
-            apiFetch('lead/' + id + '/resend-email', 'POST').then(function () {
-                showDetailNotice(container, 'Email queued for resend.', 'success');
-            });
-        });
+
 
         // Delete
         document.getElementById('wkel-detail-delete').addEventListener('click', function () {

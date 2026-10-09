@@ -1,67 +1,72 @@
-name: Configure WK Digital Insights credentials
+name: Configure site Insights credentials
 
 on:
-  workflow_run:
-    # Must match the live deployment workflow name exactly. If this drifts,
-    # plugin deploys succeed but the read-only Google credentials are never
-    # installed and the dashboard stays in "not configured" state.
-    workflows: ["Deploy Event Leads plugin"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      site:
+        description: Approved site configuration target
+        required: true
+        type: choice
+        options: [connect, cofo, wkdigital]
+      approved:
+        description: Site configuration changes have been explicitly approved
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: wkel-deploy-${{ inputs.site }}
+  cancel-in-progress: false
+
 jobs:
   configure:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ inputs.approved }}
     runs-on: ubuntu-latest
+    environment: ${{ inputs.site }}-production
+    env:
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_SITE: ${{ inputs.site }}
+      WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
+      WKEL_GA4_PROPERTY_ID: ${{ vars.WKEL_GA4_PROPERTY_ID }}
+      WKEL_SEARCH_CONSOLE_SITE_URL: ${{ vars.WKEL_SEARCH_CONSOLE_SITE_URL }}
     steps:
-      - name: Install read-only Google credentials
+      - name: Install this site's read-only Google configuration
         uses: appleboy/ssh-action@v1
-        env:
-          WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${{ secrets.WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64 }}
         with:
-          host: 149.28.165.62
-          username: root
-          key: ${{ secrets.VULTR_SSH_KEY }}
-          envs: WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          envs: DEPLOY_PATH,DEPLOY_SITE,WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64,WKEL_GA4_PROPERTY_ID,WKEL_SEARCH_CONSOLE_SITE_URL
           script: |
             set -eu
             test -n "$WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64"
-
-            TARGET_DIR="/var/lib/wk-digital-insights"
-            CRED_PATH="$TARGET_DIR/google-readonly.json"
-            WP_CONFIG="/var/www/wkdigital.com.au/wp-config.php"
-            CONFIG_FILE="$TARGET_DIR/wp-config-insights.php"
-            CONFIG_INCLUDE="require_once '$CONFIG_FILE';"
-
-            mkdir -p "$TARGET_DIR"
+            test -n "$WKEL_GA4_PROPERTY_ID" && test -n "$WKEL_SEARCH_CONSOLE_SITE_URL"
+            PLUGIN="$(realpath "$DEPLOY_PATH")"
+            case "$PLUGIN" in /*/wp-content/plugins/wk-event-leads) ;; *) exit 1 ;; esac
+            WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
+            case "$DEPLOY_SITE" in connect) EXPECTED=https://connect.digitalp.com.au;; cofo) EXPECTED=https://cofopartners.com;; wkdigital) EXPECTED=https://wkdigital.com.au;; *) exit 1;; esac
+            SITE_URL="$(wp option get home --path="$WP_ROOT" --allow-root)"
+            test "${SITE_URL%/}" = "$EXPECTED"
+            BACKUP_DIR="$HOME/wkel-backups/$DEPLOY_SITE/$(date -u +%Y%m%dT%H%M%SZ)-config"
+            install -d -m 700 "$BACKUP_DIR"
+            wp db export "$BACKUP_DIR/database.sql" --path="$WP_ROOT" --allow-root
+            cp "$WP_ROOT/wp-config.php" "$BACKUP_DIR/wp-config.php"
+            tar -czf "$BACKUP_DIR/plugin.tar.gz" -C "$(dirname "$PLUGIN")" wk-event-leads
+            chmod 600 "$BACKUP_DIR/"*
+            TARGET_DIR="/var/lib/wkel-insights/$DEPLOY_SITE"
+            if [ -d "$TARGET_DIR" ]; then tar -czf "$BACKUP_DIR/insights.tar.gz" -C "$TARGET_DIR" .; chmod 600 "$BACKUP_DIR/insights.tar.gz"; fi
+            install -d -m 750 "$TARGET_DIR"
             umask 077
-            printf '%s' "$WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64" | base64 --decode > "$CRED_PATH"
-            python3 -c 'import json,sys; json.load(open(sys.argv[1]));' "$CRED_PATH"
-            chown www-data:www-data "$CRED_PATH"
-            chmod 600 "$CRED_PATH"
-
-            printf '%s\n' \
-              '<?php' \
-              "if (!defined('WKEL_GA4_PROPERTY_ID')) define('WKEL_GA4_PROPERTY_ID', '356866720');" \
-              "if (!defined('WKEL_SEARCH_CONSOLE_SITE_URL')) define('WKEL_SEARCH_CONSOLE_SITE_URL', 'https://wkdigital.com.au/');" \
-              "if (!defined('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON')) define('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON', '$CRED_PATH');" \
-              > "$CONFIG_FILE"
-            chown root:www-data "$CONFIG_FILE"
-            chmod 640 "$CONFIG_FILE"
-
-            test -f "$WP_CONFIG"
-            if ! grep -Fq "$CONFIG_INCLUDE" "$WP_CONFIG"; then
-              cp "$WP_CONFIG" "$WP_CONFIG.bak.wkel-insights"
-              awk -v line="$CONFIG_INCLUDE" '
-                index($0, "wp-settings.php") && !done { print line; done=1 }
-                { print }
-                END { if (!done) print line }
-              ' "$WP_CONFIG" > "$WP_CONFIG.tmp"
-              mv "$WP_CONFIG.tmp" "$WP_CONFIG"
-              chown www-data:www-data "$WP_CONFIG"
-              chmod 640 "$WP_CONFIG"
-            fi
-
-            echo "WK Digital Insights credentials configured"
+            printf '%s' "$WKEL_GOOGLE_SERVICE_ACCOUNT_JSON_B64" | base64 --decode > "$TARGET_DIR/google-readonly.json.new"
+            python3 -c 'import json,sys; k=json.load(open(sys.argv[1])); assert k.get("type")=="service_account" and k.get("client_email") and k.get("private_key")' "$TARGET_DIR/google-readonly.json.new"
+            mv "$TARGET_DIR/google-readonly.json.new" "$TARGET_DIR/google-readonly.json"
+            chown root:www-data "$TARGET_DIR"
+            chown www-data:www-data "$TARGET_DIR/google-readonly.json"
+            chmod 600 "$TARGET_DIR/google-readonly.json"
+            wp config set WKEL_GA4_PROPERTY_ID "$WKEL_GA4_PROPERTY_ID" --path="$WP_ROOT" --allow-root
+            wp config set WKEL_SEARCH_CONSOLE_SITE_URL "$WKEL_SEARCH_CONSOLE_SITE_URL" --path="$WP_ROOT" --allow-root
+            wp config set WKEL_GOOGLE_SERVICE_ACCOUNT_JSON "$TARGET_DIR/google-readonly.json" --path="$WP_ROOT" --allow-root
+            echo 'Site-local Google configuration installed. Verify read-only property permissions separately.'

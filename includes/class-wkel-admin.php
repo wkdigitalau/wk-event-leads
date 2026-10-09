@@ -187,6 +187,7 @@ class WKEL_Admin {
 
                 <select name="wkel_email_status">
                     <option value=""><?php esc_html_e('All Email Statuses', 'wk-event-leads'); ?></option>
+                    <?php foreach (['draft' => 'Draft', 'bounced' => 'Bounced', 'suppressed' => 'Suppressed'] as $value => $label): ?><option value="<?php echo esc_attr($value); ?>" <?php selected($_GET['wkel_email_status'] ?? '', $value); ?>><?php echo esc_html($label); ?></option><?php endforeach; ?>
                     <option value="queued"  <?php selected($_GET['wkel_email_status'] ?? '', 'queued'); ?>><?php esc_html_e('Queued', 'wk-event-leads'); ?></option>
                     <option value="not_sent" <?php selected($_GET['wkel_email_status'] ?? '', 'not_sent'); ?>><?php esc_html_e('Not Sent', 'wk-event-leads'); ?></option>
                     <option value="sent"    <?php selected($_GET['wkel_email_status'] ?? '', 'sent'); ?>><?php esc_html_e('Sent', 'wk-event-leads'); ?></option>
@@ -214,13 +215,14 @@ class WKEL_Admin {
     }
 
     private static function handle_bulk_actions(): void {
-        $action = $_POST['action'] ?? $_POST['action2'] ?? '';
+        $action = sanitize_key($_POST['action'] ?? '');
+        if ($action === '-1' || $action === '') $action = sanitize_key($_POST['action2'] ?? '');
         if (!$action || $action === '-1') {
             return;
         }
 
         $nonce = $_POST['_wpnonce'] ?? '';
-        if (!wp_verify_nonce($nonce, 'bulk-wkel_leads')) {
+        if (!wp_verify_nonce($nonce, 'bulk-leads')) {
             return;
         }
 
@@ -238,18 +240,8 @@ class WKEL_Admin {
                 break;
 
             case 'resend_email':
-                foreach ($lead_ids as $id) {
-                    if (class_exists('WKEL_Campaign') && WKEL_Campaign::is_lead_suppressed($id)) {
-                        update_post_meta($id, '_wkel_email_status', 'unsubscribed');
-                        WKEL_Submission::log_activity($id, 'email_suppressed', 'Resend skipped because the contact has opted out.');
-                        continue;
-                    }
-                    update_post_meta($id, '_wkel_email_status', 'queued');
-                    update_post_meta($id, '_wkel_email_attempts', 0);
-                    if (function_exists('as_schedule_single_action')) {
-                        as_schedule_single_action(time(), 'wkel_send_confirmation_email', ['lead_id' => $id], 'wk-event-leads');
-                    }
-                }
+                foreach ($lead_ids as $id) WKEL_Outreach_Store::audit($id, 0, 'bulk_send_blocked');
+                wp_die('Bulk sending is disabled. Use Outreach.');
                 break;
 
             default:
@@ -343,7 +335,6 @@ class WKEL_Lead_List_Table extends WP_List_Table {
     protected function get_bulk_actions(): array {
         $actions = [
             'delete'       => __('Delete', 'wk-event-leads'),
-            'resend_email' => __('Resend Email', 'wk-event-leads'),
         ];
 
         foreach ($this->stages as $stage) {
@@ -466,8 +457,8 @@ class WKEL_Lead_List_Table extends WP_List_Table {
     }
 
     private static function email_status_badge(string $status): string {
-        $colors = ['not_sent' => '#6B7280', 'queued' => '#9CA3AF', 'sent' => '#10B981', 'failed' => '#EF4444', 'unsubscribed' => '#7C3AED'];
-        $labels = ['not_sent' => 'Not Sent', 'queued' => 'Queued', 'sent' => 'Sent', 'failed' => 'Failed', 'unsubscribed' => 'Unsubscribed'];
+        $colors = ['draft' => '#6B7280', 'bounced' => '#EF4444', 'suppressed' => '#7C3AED', 'delivered' => '#10B981', 'not_sent' => '#6B7280', 'queued' => '#9CA3AF', 'sent' => '#10B981', 'failed' => '#EF4444', 'unsubscribed' => '#7C3AED'];
+        $labels = ['draft' => 'Draft', 'bounced' => 'Bounced', 'suppressed' => 'Suppressed', 'delivered' => 'Delivered', 'not_sent' => 'Not Sent', 'queued' => 'Queued', 'sent' => 'Sent', 'failed' => 'Failed', 'unsubscribed' => 'Unsubscribed'];
         $color  = $colors[$status] ?? '#9CA3AF';
         $label  = $labels[$status] ?? $status;
         return sprintf(
@@ -480,8 +471,8 @@ class WKEL_Lead_List_Table extends WP_List_Table {
     }
 
     private static function marketing_status_badge(string $status): string {
-        $color = $status === 'unsubscribed' ? '#7C3AED' : '#10B981';
-        $label = $status === 'unsubscribed' ? 'Unsubscribed' : 'Subscribed';
+        $color = $status === 'unsubscribed' ? '#7C3AED' : ($status === 'subscribed' ? '#10B981' : '#6B7280');
+        $label = $status === 'unsubscribed' ? 'Unsubscribed' : ($status === 'subscribed' ? 'Subscribed' : 'Not recorded');
         return sprintf(
             '<span class="wkel-email-badge" style="display:inline-flex;align-items:center;gap:4px;">'
             . '<span style="width:8px;height:8px;border-radius:50%%;background:%s;display:inline-block;"></span>'

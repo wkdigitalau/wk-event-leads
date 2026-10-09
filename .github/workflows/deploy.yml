@@ -1,121 +1,125 @@
 name: Deploy Event Leads plugin
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       site:
-        description: Site to deploy
+        description: Approved deployment target
         required: true
-        default: wkdigital
         type: choice
-        options:
-          - wkdigital
-          - connect
+        options: [connect, cofo, wkdigital]
+      release_tag:
+        description: Immutable approved release tag (for example v1.4.0)
+        required: true
+        type: string
+      release_sha256:
+        description: SHA-256 of the approved release ZIP
+        required: true
+        type: string
+      approved:
+        description: Production deployment has been explicitly approved
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
+concurrency:
+  group: wkel-deploy-${{ inputs.site }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
+    if: ${{ inputs.approved }}
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.event_name == 'push' && 'wkdigital-production' || (inputs.site == 'connect' && 'connect-production' || 'wkdigital-production') }}
+    environment: ${{ inputs.site }}-production
     env:
-      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST || '149.28.165.62' }}
-      DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
-      # Connect shares the Vultr VM and uses the existing repository-level server key.
-      DEPLOY_KEY: ${{ inputs.site == 'connect' && secrets.VULTR_SSH_KEY || secrets.DEPLOY_KEY || secrets.VULTR_SSH_KEY }}
-      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/var/www/wkdigital.com.au/wp-content/plugins/wk-event-leads' }}
-      DEPLOY_SITE: ${{ github.event_name == 'push' && 'wkdigital' || inputs.site }}
-      DEPLOY_IS_CONFIGURED: ${{ github.event_name == 'push' || (inputs.site == 'connect' && secrets.DEPLOY_HOST != '' && secrets.DEPLOY_USER != '' && secrets.DEPLOY_PATH != '' && secrets.VULTR_SSH_KEY != '') || (inputs.site == 'wkdigital' && (secrets.DEPLOY_KEY != '' || secrets.VULTR_SSH_KEY != '')) }}
-
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      DEPLOY_SITE: ${{ inputs.site }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check deployment configuration
-        shell: bash
+      - name: Validate release tag and isolated deployment configuration
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is not configured"; exit 1; }
-          test -n "$DEPLOY_USER" || { echo "DEPLOY_USER is not configured"; exit 1; }
-          test -n "$DEPLOY_KEY" || { echo "DEPLOY_KEY is not configured"; exit 1; }
-          test -n "$DEPLOY_PATH" || { echo "DEPLOY_PATH is not configured"; exit 1; }
-          test "$DEPLOY_IS_CONFIGURED" = "true" || {
-            echo "The selected site does not have its own GitHub Environment deployment secrets configured."
-            exit 1
-          }
-          echo "Preparing deployment for $DEPLOY_SITE"
-          echo "Target path: $DEPLOY_PATH"
-
-      - name: Back up Connect database and current plugin
-        if: ${{ env.DEPLOY_SITE == 'connect' }}
-        uses: appleboy/ssh-action@v1
-        env:
-          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_KEY" && test -n "$DEPLOY_PATH"
+          [[ "$DEPLOY_PATH" = /*/wp-content/plugins/wk-event-leads ]] || exit 1
+      - name: Checkout the same immutable release for every site
+        uses: actions/checkout@v4
         with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_KEY }}
-          envs: DEPLOY_PATH
-          script: |
-            set -euo pipefail
-            test "$(id -u)" -eq 0 || { echo "Connect deployment requires root SSH access for the ownership step; stopped before backup or file copy"; exit 1; }
-            PLUGIN="$DEPLOY_PATH"
-            WP_ROOT=""
-            CANDIDATE="$(dirname "$PLUGIN")"
-            while [ "$CANDIDATE" != "/" ]; do
-              if [ -f "$CANDIDATE/wp-config.php" ]; then
-                WP_ROOT="$CANDIDATE"
-                break
-              fi
-              CANDIDATE="$(dirname "$CANDIDATE")"
-            done
-            test -n "$WP_ROOT" || { echo "WordPress root not found above DEPLOY_PATH; backup stopped before file copy"; exit 1; }
-            test -d "$PLUGIN" || { echo "Configured plugin directory does not exist; backup stopped before file copy"; exit 1; }
-            command -v wp >/dev/null || { echo "WP-CLI is not installed; backup stopped before deployment"; exit 1; }
-            SITE_URL="$(wp option get siteurl --path="$WP_ROOT" --allow-root)"
-            case "$SITE_URL" in "https://connect.digitalp.com.au"|"https://connect.digitalp.com.au/"|"http://connect.digitalp.com.au"|"http://connect.digitalp.com.au/") ;; *) echo "WordPress URL mismatch; backup/deployment stopped"; exit 1 ;; esac
-            BACKUP_DIR="$HOME/wkel-connect-backups"
-            install -d -m 700 "$BACKUP_DIR"
-            STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-            DB_BACKUP="$BACKUP_DIR/connect-db-$STAMP.sql"
-            PLUGIN_BACKUP="$BACKUP_DIR/connect-plugin-$STAMP.tar.gz"
-            wp db export "$DB_BACKUP" --path="$WP_ROOT" --allow-root
-            tar -czf "$PLUGIN_BACKUP" -C "$(dirname "$PLUGIN")" "$(basename "$PLUGIN")"
-            test -s "$DB_BACKUP" && test -s "$PLUGIN_BACKUP"
-            chmod 600 "$DB_BACKUP" "$PLUGIN_BACKUP"
-            echo "Verified backup files: $DB_BACKUP and $PLUGIN_BACKUP"
-
-      - name: Copy plugin files to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_KEY }}
-          source: "."
-          target: ${{ env.DEPLOY_PATH }}
-          strip_components: 1
-          rm: false
-
-      - name: Fix permissions
-        uses: appleboy/ssh-action@v1
+          ref: ${{ inputs.release_tag }}
+          persist-credentials: false
+      - name: Download and verify the one approved release artifact
         env:
-          DEPLOY_PATH: ${{ env.DEPLOY_PATH }}
-          DEPLOY_SITE: ${{ env.DEPLOY_SITE }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SHA256: ${{ inputs.release_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || exit 1
+          ARCHIVE="wk-event-leads-${RELEASE_TAG#v}.zip"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ARCHIVE" --dir downloaded
+          printf '%s  %s\n' "$RELEASE_SHA256" "downloaded/$ARCHIVE" | sha256sum -c -
+          unzip -q "downloaded/$ARCHIVE" -d release-stage
+          tar --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner -czf wkel-release.tar.gz -C release-stage/wk-event-leads .
+          sha256sum wkel-release.tar.gz > wkel-release.tar.gz.sha256
+      - name: Back up the selected site's database, configuration and plugin
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
           key: ${{ env.DEPLOY_KEY }}
           envs: DEPLOY_PATH,DEPLOY_SITE
           script: |
-            set -e
-            PLUGIN="$DEPLOY_PATH"
-            chown -R www-data:www-data "$PLUGIN"
-            find "$PLUGIN" -type f -exec chmod 644 {} +
+            set -eu
+            PLUGIN="$(realpath "$DEPLOY_PATH")"
+            case "$PLUGIN" in /*/wp-content/plugins/wk-event-leads) ;; *) exit 1 ;; esac
+            WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
+            test -f "$WP_ROOT/wp-config.php" && test -d "$PLUGIN"
+            command -v wp >/dev/null
+            case "$DEPLOY_SITE" in connect) EXPECTED=https://connect.digitalp.com.au;; cofo) EXPECTED=https://cofopartners.com;; wkdigital) EXPECTED=https://wkdigital.com.au;; *) exit 1;; esac
+            SITE_URL="$(wp option get home --path="$WP_ROOT" --allow-root)"
+            test "${SITE_URL%/}" = "$EXPECTED"
+            BACKUP_DIR="$HOME/wkel-backups/$DEPLOY_SITE/$(date -u +%Y%m%dT%H%M%SZ)"
+            install -d -m 700 "$BACKUP_DIR"
+            wp db export "$BACKUP_DIR/database.sql" --path="$WP_ROOT" --allow-root
+            tar -czf "$BACKUP_DIR/plugin.tar.gz" -C "$(dirname "$PLUGIN")" wk-event-leads
+            cp "$WP_ROOT/wp-config.php" "$BACKUP_DIR/wp-config.php"
+            test -s "$BACKUP_DIR/database.sql" && test -s "$BACKUP_DIR/plugin.tar.gz" && test -s "$BACKUP_DIR/wp-config.php"
+            chmod 600 "$BACKUP_DIR/"*
+            tar -tzf "$BACKUP_DIR/plugin.tar.gz" >/dev/null
+            printf 'Verified backup: %s\n' "$BACKUP_DIR"
+      - name: Upload release without replacing configuration
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
+          source: wkel-release.tar.gz,wkel-release.tar.gz.sha256
+          target: ${{ env.DEPLOY_PATH }}/.wkel-release
+      - name: Install verified package and keep delivery locked
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
+          envs: DEPLOY_PATH,DEPLOY_SITE
+          script: |
+            set -eu
+            PLUGIN="$(realpath "$DEPLOY_PATH")"
+            case "$PLUGIN" in /*/wp-content/plugins/wk-event-leads) ;; *) exit 1 ;; esac
+            WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
+            cd "$PLUGIN/.wkel-release"
+            sha256sum -c wkel-release.tar.gz.sha256
+            tar -xzf wkel-release.tar.gz -C "$PLUGIN"
+            find "$PLUGIN" -type f -not -path '*/.wkel-release/*' -exec chmod 644 {} +
             find "$PLUGIN" -type d -exec chmod 755 {} +
-            echo "Deployed wk-event-leads to $DEPLOY_SITE at $(date)"
+            wp option update wkel_outreach_dry_run 1 --path="$WP_ROOT" --allow-root
+            wp option update wkel_outreach_enabled 0 --path="$WP_ROOT" --allow-root
+            wp eval 'echo "Installed WK Event Leads " . WKEL_VERSION . PHP_EOL;' --path="$WP_ROOT" --allow-root
+            echo "Installed shared release; site QA and separate sending approval remain required."

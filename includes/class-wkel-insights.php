@@ -63,7 +63,7 @@ class WKEL_Insights {
                 <?php if (is_wp_error($google)) : ?>
                     <div class="wkel-insights__notice is-error"><strong>Google data unavailable.</strong> <?php echo esc_html($google->get_error_message()); ?></div>
                 <?php elseif (empty($google['configured'])) : ?>
-                    <div class="wkel-insights__notice"><strong>Google connection not configured.</strong> Add the constants shown below to <code>wp-config.php</code>, grant the service account read access in GA4 and Search Console, then reload this page.</div>
+                    <div class="wkel-insights__notice"><strong>Google connection not configured.</strong> Configure this installation’s GA4 property, Search Console property and private service-account file in <code>wp-config.php</code>, grant the service account read access in GA4 and Search Console, then reload this page.</div>
                 <?php else : ?>
                     <div class="wkel-insights__grid">
                         <?php self::metric_card('GA4 users', $google['ga4']['active_users'] ?? '—', 'Aggregate active users'); ?>
@@ -103,9 +103,9 @@ class WKEL_Insights {
                 <h2><?php esc_html_e('Google connection', 'wk-event-leads'); ?></h2>
                 <p><?php esc_html_e('Secrets stay outside the plugin repository. The service account only needs read access.', 'wk-event-leads'); ?></p>
                 <table><tbody>
-                    <tr><th>GA4 property</th><td><code>define('WKEL_GA4_PROPERTY_ID', '356866720');</code></td></tr>
-                    <tr><th>Search Console property</th><td><code>define('WKEL_SEARCH_CONSOLE_SITE_URL', 'https://wkdigital.com.au/');</code></td></tr>
-                    <tr><th>Service account</th><td><code>define('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON', '/private/path/google-readonly.json');</code></td></tr>
+                    <tr><th>GA4 property</th><td><?php echo esc_html(defined('WKEL_GA4_PROPERTY_ID') && trim((string) WKEL_GA4_PROPERTY_ID) !== '' ? (string) WKEL_GA4_PROPERTY_ID : 'Not configured'); ?></td></tr>
+                    <tr><th>Search Console property</th><td><?php echo esc_html(defined('WKEL_SEARCH_CONSOLE_SITE_URL') && trim((string) WKEL_SEARCH_CONSOLE_SITE_URL) !== '' ? (string) WKEL_SEARCH_CONSOLE_SITE_URL : 'Not configured'); ?></td></tr>
+                    <tr><th>Service account</th><td><?php echo esc_html(defined('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON') && trim((string) WKEL_GOOGLE_SERVICE_ACCOUNT_JSON) !== '' ? 'Configured (credentials hidden)' : 'Not configured'); ?></td></tr>
                 </tbody></table>
             </section>
         </div>
@@ -194,10 +194,17 @@ class WKEL_Insights {
     }
 
     private static function google_metrics(int $days): array|WP_Error {
-        if (!defined('WKEL_GA4_PROPERTY_ID') || !defined('WKEL_SEARCH_CONSOLE_SITE_URL') || !defined('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON')) {
+        if (!defined('WKEL_GA4_PROPERTY_ID') || !defined('WKEL_SEARCH_CONSOLE_SITE_URL') || !defined('WKEL_GOOGLE_SERVICE_ACCOUNT_JSON') || trim((string) WKEL_GA4_PROPERTY_ID) === '' || trim((string) WKEL_SEARCH_CONSOLE_SITE_URL) === '' || trim((string) WKEL_GOOGLE_SERVICE_ACCOUNT_JSON) === '') {
             return ['configured' => false];
         }
 
+        if (!ctype_digit((string) WKEL_GA4_PROPERTY_ID)) return new WP_Error('wkel_google_property', 'GA4 property ID must be numeric.');
+        $site_host = strtolower((string) wp_parse_url(home_url(), PHP_URL_HOST));
+        $property = (string) WKEL_SEARCH_CONSOLE_SITE_URL;
+        $property_host = str_starts_with($property, 'sc-domain:') ? strtolower(substr($property, 10)) : strtolower((string) wp_parse_url($property, PHP_URL_HOST));
+        if (!$property_host || ($site_host !== $property_host && !(str_starts_with($property, 'sc-domain:') && str_ends_with($site_host, '.' . $property_host)))) {
+            return new WP_Error('wkel_google_site', 'Search Console property does not match this installation.');
+        }
         $token = self::google_token();
         if (is_wp_error($token)) return $token;
 
@@ -229,7 +236,7 @@ class WKEL_Insights {
         $search_pages = self::google_post(
             'https://www.googleapis.com/webmasters/v3/sites/' . rawurlencode((string) WKEL_SEARCH_CONSOLE_SITE_URL) . '/searchAnalytics/query',
             $token,
-            ['startDate' => $start, 'endDate' => $end, 'type' => 'web', 'dimensions' => ['page'], 'rowLimit' => 10, 'orderBy' => [['field' => 'clicks', 'descending' => true]]]
+            ['startDate' => $start, 'endDate' => $end, 'type' => 'web', 'dimensions' => ['page'], 'rowLimit' => 10]
         );
         if (is_wp_error($search_pages)) return $search_pages;
 
@@ -283,7 +290,7 @@ class WKEL_Insights {
             return new WP_Error('wkel_google_credentials', 'The Google service-account JSON is missing or invalid.');
         }
 
-        $cache_key = 'wkel_google_token_' . substr(hash('sha256', (string) $key['client_email']), 0, 16);
+        $cache_key = 'wkel_google_token_' . substr(hash('sha256', home_url() . ':' . get_current_blog_id() . ':' . (string) $key['client_email'] . ':' . (string) ($key['private_key_id'] ?? '') . ':' . hash('sha256', (string) $key['private_key'])), 0, 16);
         $cached    = get_transient($cache_key);
         if (is_string($cached) && $cached !== '') return $cached;
 
@@ -309,10 +316,10 @@ class WKEL_Insights {
             'timeout' => 15,
             'body' => ['grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion' => $input . '.' . self::base64url($signature)],
         ]);
-        if (is_wp_error($response)) return $response;
+        if (is_wp_error($response)) return new WP_Error('wkel_google_network', 'Google reporting connection failed.');
         $body = json_decode((string) wp_remote_retrieve_body($response), true);
         if (wp_remote_retrieve_response_code($response) >= 300 || empty($body['access_token'])) {
-            return new WP_Error('wkel_google_token', sanitize_text_field($body['error_description'] ?? 'Google authentication failed.'));
+            return new WP_Error('wkel_google_token', 'Google authentication failed. Verify this site’s credentials and read-only permissions.');
         }
         set_transient($cache_key, $body['access_token'], max(60, absint($body['expires_in'] ?? 3600) - 120));
         return $body['access_token'];
@@ -324,10 +331,10 @@ class WKEL_Insights {
             'headers' => ['Authorization' => 'Bearer ' . $token, 'Content-Type' => 'application/json'],
             'body'    => wp_json_encode($body),
         ]);
-        if (is_wp_error($response)) return $response;
+        if (is_wp_error($response)) return new WP_Error('wkel_google_network', 'Google reporting connection failed.');
         $decoded = json_decode((string) wp_remote_retrieve_body($response), true);
         if (wp_remote_retrieve_response_code($response) >= 300) {
-            return new WP_Error('wkel_google_api', sanitize_text_field($decoded['error']['message'] ?? 'Google reporting request failed.'));
+            return new WP_Error('wkel_google_api', 'Google reporting request failed. Verify this site’s property identifiers and read-only permissions.');
         }
         return is_array($decoded) ? $decoded : [];
     }

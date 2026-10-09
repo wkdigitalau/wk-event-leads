@@ -1,0 +1,63 @@
+name: WK Event Leads local-equivalent QA
+on:
+  pull_request:
+  push:
+    branches: ['codex/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.3']
+        wordpress: ['6.4.3', 'latest']
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: DummyQA-only-database
+        ports: ['3307:3306']
+        options: --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      WKEL_QA_DB_HOST: 127.0.0.1:3307
+      WKEL_QA_DB_PASSWORD: DummyQA-only-database
+      MYSQL_PWD: DummyQA-only-database
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mysqli, openssl, mbstring, curl
+          coverage: none
+      - name: Lint
+        run: |
+          find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
+          node --check assets/js/kanban.js
+          git diff --check
+      - name: Install isolated WordPress and block delivery
+        env:
+          WP_VERSION: ${{ matrix.wordpress }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/wkel-ci/wordpress
+          curl -fsSL https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o /tmp/wkel-ci/wp-cli.phar
+          php /tmp/wkel-ci/wp-cli.phar core download --path=/tmp/wkel-ci/wordpress --version="$WP_VERSION"
+          cp tests/qa-config.php /tmp/wkel-ci/wordpress/wp-config.php
+          mkdir -p /tmp/wkel-ci/wordpress/wp-content/mu-plugins
+          cp tests/qa-guard.php /tmp/wkel-ci/wordpress/wp-content/mu-plugins/
+          ln -s "$GITHUB_WORKSPACE" /tmp/wkel-ci/wordpress/wp-content/plugins/wk-event-leads
+          mysql -h 127.0.0.1 -P 3307 -u root -e 'CREATE DATABASE wkel_qa_connect; CREATE DATABASE wkel_qa_cofo; CREATE DATABASE wkel_qa_wkdigital;'
+      - name: Test each installation with dummy data and mocked providers
+        run: |
+          set -euo pipefail
+          for site in connect cofo wkdigital; do
+            export WKEL_QA_SITE="$site"
+            php /tmp/wkel-ci/wp-cli.phar core install --path=/tmp/wkel-ci/wordpress --url="https://$site.wkel.test" --title="WKEL Dummy $site" --admin_user=wkelqa --admin_password='DummyQA-only-DoNotUseInProduction-140' --admin_email=dummy-admin@example.invalid --skip-email
+            php /tmp/wkel-ci/wp-cli.phar plugin activate wk-event-leads --path=/tmp/wkel-ci/wordpress
+            php /tmp/wkel-ci/wp-cli.phar eval 'echo WKEL_VERSION;' --path=/tmp/wkel-ci/wordpress
+            php tests/integration.php /tmp/wkel-ci/wordpress
+            for mode in missing blank invalid mismatch configured forbidden; do php tests/google.php /tmp/wkel-ci/wordpress "$mode"; done
+          done

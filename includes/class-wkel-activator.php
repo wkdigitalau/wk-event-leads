@@ -19,7 +19,7 @@ class WKEL_Activator {
 
         add_option('wkel_version', WKEL_VERSION);
         add_option('wkel_rate_limit', 5);
-        add_option('wkel_success_message', 'Thanks — check your inbox.');
+        add_option('wkel_success_message', 'Thanks — your details have been received.');
         add_option('wkel_data_retention_days', 365);
         add_option('wkel_honeypot_enabled', '1');
         add_option('wkel_privacy_policy_url', get_privacy_policy_url());
