@@ -137,6 +137,19 @@ check(message($l)['status'] === 'bounced', 'late failure cannot downgrade bounce
 check(is_wp_error(WKEL_Outreach::send(preview($l, $t))), 'bounce blocks subsequent send');
 $bad = new WP_REST_Request('POST'); $bad->set_body('{}');
 check(WKEL_Email::handle_webhook($bad)->get_status() === 401, 'unsigned webhook rejected');
+// Test mode bypasses the production server lock only for exact allowlisted recipients.
+update_option('wkel_outreach_dry_run', '1');
+update_option('wkel_outreach_test_recipients', "dummy-test-allowed@example.invalid");
+update_option('wkel_outreach_test_mode', '1');
+$before_test_send = count($GLOBALS['wkel_http_calls']);
+$allowed_test = lead('test-allowed');
+$result = WKEL_Outreach::send(preview($allowed_test, $t));
+check(is_string($result) && message($allowed_test)['mode'] === 'test' && count($GLOBALS['wkel_http_calls']) === $before_test_send + 1, 'allowlisted test mode sends one real-provider request even while dry-run is on');
+$blocked_test = lead('test-blocked');
+$result = WKEL_Outreach::send(preview($blocked_test, $t));
+check(is_wp_error($result) && $result->get_error_code() === 'test_recipient_not_allowed' && count($GLOBALS['wkel_http_calls']) === $before_test_send + 1, 'test mode blocks every recipient outside the exact allowlist');
+update_option('wkel_outreach_test_mode', '0');
+update_option('wkel_outreach_test_recipients', '');
 foreach (['rejected', 'timeout', 'malformed'] as $mode) {
     $GLOBALS['wkel_mock'] = $mode; $l = lead($mode); $result = WKEL_Outreach::send(preview($l, $t));
     check(is_wp_error($result) && message($l)['status'] === 'failed', 'mocked ' . $mode . ' failure recorded');
