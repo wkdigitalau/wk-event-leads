@@ -119,7 +119,18 @@ jobs:
             tar -xzf wkel-release.tar.gz -C "$PLUGIN"
             find "$PLUGIN" -type f -not -path '*/.wkel-release/*' -exec chmod 644 {} +
             find "$PLUGIN" -type d -exec chmod 755 {} +
+            # The reproducible archive has a fixed 2020 mtime; refresh PHP mtimes so PHP-FPM OPcache detects this deployment.
+            find "$PLUGIN" -type f -name '*.php' -not -path '*/.wkel-release/*' -exec touch {} +
+            test "$(stat -c %Y "$PLUGIN/includes/class-wkel-outreach.php")" -gt "$(date -d '1 minute ago' +%s)"
+            grep -Fq 'Enable internal test sending' "$PLUGIN/includes/class-wkel-outreach.php"
+            grep -Fq 'Allowed test email addresses' "$PLUGIN/includes/class-wkel-outreach.php"
             wp option update wkel_outreach_dry_run 1 --path="$WP_ROOT" --allow-root
             wp option update wkel_outreach_enabled 0 --path="$WP_ROOT" --allow-root
-            wp eval 'echo "Installed WK Event Leads " . WKEL_VERSION . PHP_EOL;' --path="$WP_ROOT" --allow-root
+            wp eval '
+              if (!class_exists("WKEL_Outreach")) { throw new RuntimeException("WKEL_Outreach did not load"); }
+              $source = file_get_contents((new ReflectionClass("WKEL_Outreach"))->getFileName());
+              if (!str_contains($source, "Enable internal test sending") || !str_contains($source, "Allowed test email addresses")) throw new RuntimeException("New outreach controls did not load");
+              echo "Loaded outreach code: test-only controls present" . PHP_EOL;
+              echo "Installed WK Event Leads " . WKEL_VERSION . PHP_EOL;
+            ' --path="$WP_ROOT" --allow-root
             echo "Installed shared release; site QA and separate sending approval remain required."
