@@ -71,9 +71,6 @@ jobs:
         run: python3 scripts/build-release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: wk-event-leads-wordpress-1.4.2
-          path: |
-            dist/wk-event-leads-1.4.2.zip
-            dist/wk-event-leads-1.4.2.manifest.json
-            dist/wk-event-leads-1.4.2.zip.sha256
+          name: wk-event-leads-wordpress-${{ github.sha }}
+          path: dist/wk-event-leads-*
           retention-days: 7
