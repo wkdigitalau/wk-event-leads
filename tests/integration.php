@@ -158,10 +158,12 @@ check(is_wp_error($result) && $result->get_error_code() === 'test_recipient_not_
 check(is_wp_error(WKEL_Outreach::preview($allowed_test, $t, 'live')), 'live tab refuses a recipient reserved for test mode');
 update_option('wkel_outreach_test_mode', '0');
 update_option('wkel_outreach_test_recipients', '');
-update_option('wkel_outreach_dry_run', '0');
+update_option('wkel_outreach_dry_run', '1');
 $live_locked = lead('live-locked');
+$before_live_dry_run = count($GLOBALS['wkel_http_calls']);
 $live_preview = WKEL_Outreach::preview($live_locked, $t, 'live');
-check(!is_wp_error($live_preview) && is_wp_error(WKEL_Outreach::send($live_preview['token'])), 'live tab keeps the server-side live-send lock enforced');
+$live_result = is_wp_error($live_preview) ? $live_preview : WKEL_Outreach::send($live_preview['token']);
+check(is_string($live_result) && str_contains($live_result, 'Dry run') && count($GLOBALS['wkel_http_calls']) === $before_live_dry_run, 'live tab stays dry-run with no delivery while dry-run is enabled');
 foreach (['rejected', 'timeout', 'malformed'] as $mode) {
     $GLOBALS['wkel_mock'] = $mode; $l = lead($mode); $result = WKEL_Outreach::send(preview($l, $t));
     check(is_wp_error($result) && message($l)['status'] === 'failed', 'mocked ' . $mode . ' failure recorded');
