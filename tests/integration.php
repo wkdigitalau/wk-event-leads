@@ -163,7 +163,7 @@ $live_locked = lead('live-locked');
 $before_live_dry_run = count($GLOBALS['wkel_http_calls']);
 $live_preview = WKEL_Outreach::preview($live_locked, $t, 'live');
 $live_result = is_wp_error($live_preview) ? $live_preview : WKEL_Outreach::send($live_preview['token']);
-check(is_string($live_result) && str_contains($live_result, 'Dry run') && count($GLOBALS['wkel_http_calls']) === $before_live_dry_run, 'live tab stays dry-run with no delivery while dry-run is enabled');
+check(is_wp_error($live_result) && $live_result->get_error_code() === 'live_send_locked' && count($GLOBALS['wkel_http_calls']) === $before_live_dry_run, 'live tab stays locked with no delivery while dry-run is enabled');
 foreach (['rejected', 'timeout', 'malformed'] as $mode) {
     $GLOBALS['wkel_mock'] = $mode; $l = lead($mode); $result = WKEL_Outreach::send(preview($l, $t));
     check(is_wp_error($result) && message($l)['status'] === 'failed', 'mocked ' . $mode . ' failure recorded');
