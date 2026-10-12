@@ -292,7 +292,7 @@ class WKEL_Outreach {
                     update_option('wkel_outreach_enabled', !empty($_POST['enabled']) ? '1' : '0');
                     update_option('wkel_outreach_dry_run', !empty($_POST['dry_run']) ? '1' : '0');
                     update_option('wkel_outreach_test_mode', !empty($_POST['test_mode']) ? '1' : '0');
-                    update_option('wkel_outreach_test_recipients', implode("\\n", array_values($recipients)));
+                    update_option('wkel_outreach_test_recipients', implode("\n", array_values($recipients)));
                     $result = 'Outreach settings saved.';
                     break;
                 case 'add':
