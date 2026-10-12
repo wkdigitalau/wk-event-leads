@@ -126,10 +126,26 @@ class WKEL_Outreach {
         return $payload;
     }
 
+    private static function test_recipients(): array {
+        $raw = (string) get_option('wkel_outreach_test_recipients', '');
+        $parts = preg_split('/[\\r\\n,;]+/', $raw) ?: [];
+        $emails = [];
+        foreach ($parts as $part) {
+            $email = strtolower(sanitize_email(trim($part)));
+            if ($email && is_email($email)) $emails[$email] = $email;
+        }
+        return array_values($emails);
+    }
+
+    private static function is_test_recipient(string $email): bool {
+        return in_array(strtolower(sanitize_email($email)), self::test_recipients(), true);
+    }
+
     private static function fingerprint(int $lead_id, int $template_id, array $payload): string {
         return hash('sha256', wp_json_encode([home_url(), get_current_blog_id(), $lead_id, $template_id,
             get_post_meta($template_id, '_wkel_revision', true), get_post_meta($lead_id), $payload, get_option('wkel_outreach_enabled'),
-            get_option('wkel_outreach_dry_run'), hash('sha256', (string) get_option('wkel_resend_key', ''))]));
+            get_option('wkel_outreach_dry_run'), get_option('wkel_outreach_test_mode', '0'), get_option('wkel_outreach_test_recipients', ''),
+            hash('sha256', (string) get_option('wkel_resend_key', ''))]));
     }
 
     public static function preview(int $lead_id, int $template_id): array|WP_Error {
@@ -152,6 +168,9 @@ class WKEL_Outreach {
         $payload = self::payload($lead, $template);
         if (is_wp_error($payload)) return self::reject($lead, $payload->get_error_code());
         if (!hash_equals($preview['fingerprint'], self::fingerprint($lead, $template, $payload))) return self::reject($lead, 'preview_changed');
+        if (get_option('wkel_outreach_test_mode', '0') === '1' && !self::is_test_recipient($payload['to'][0])) {
+            return self::reject($lead, 'test_recipient_not_allowed');
+        }
         $blocked = WKEL_Outreach_Store::blocked($lead, $payload['to'][0]);
         if ($blocked) return self::reject($lead, $blocked);
         $lock = 'wkel_send_lock_' . $lead;
@@ -171,7 +190,11 @@ class WKEL_Outreach {
 
     private static function dispatch(int $lead, int $template, string $token, array $payload): string|WP_Error {
         global $wpdb;
-        $dry = !defined('WKEL_OUTREACH_ALLOW_LIVE') || WKEL_OUTREACH_ALLOW_LIVE !== true || get_option('wkel_outreach_dry_run', '1') !== '0';
+        $test_send = get_option('wkel_outreach_test_mode', '0') === '1' && self::is_test_recipient($payload['to'][0]);
+        $server_live = defined('WKEL_OUTREACH_ALLOW_LIVE') && WKEL_OUTREACH_ALLOW_LIVE === true && get_option('wkel_outreach_dry_run', '1') === '0';
+        // The explicit test mode bypasses the server lock and dry-run only for exact allowlisted recipients.
+        $dry = !$test_send && !$server_live;
+        $delivery_mode = $test_send ? 'test' : ($dry ? 'dry_run' : 'live');
         $key = WKEL_Encryption::decrypt((string) get_option('wkel_resend_key', ''));
         if (!$dry && (!$key || WKEL_Encryption::is_encrypted($key))) return self::reject($lead, 'resend_not_configured');
         if (!$dry && (!defined('WKEL_ENCRYPTION_KEY') || !defined('WKEL_ENCRYPTION_IV'))) return self::reject($lead, 'encryption_not_configured');
@@ -181,12 +204,12 @@ class WKEL_Outreach {
         if (!WKEL_Encryption::is_encrypted($snapshot)) $snapshot = '';
         $ok = $wpdb->insert(WKEL_Outreach_Store::table('messages'), ['lead_id' => $lead, 'template_id' => $template,
             'revision' => (int) get_post_meta($template, '_wkel_revision', true), 'author_id' => get_current_user_id(),
-            'authorization_hash' => hash('sha256', $token), 'mode' => $dry ? 'dry_run' : 'live',
+            'authorization_hash' => hash('sha256', $token), 'mode' => $delivery_mode,
             'status' => $dry ? 'draft' : 'queued', 'payload' => $snapshot, 'created_at' => time()]);
         if (!$ok) return self::reject($lead, 'authorization_used_or_storage_failed');
         $id = (int) $wpdb->insert_id;
         delete_transient('wkel_preview_' . $token);
-        if (!WKEL_Outreach_Store::audit($lead, $id, 'send_authorized', $dry ? 'dry_run' : 'live')) {
+        if (!WKEL_Outreach_Store::audit($lead, $id, 'send_authorized', $delivery_mode)) {
             $wpdb->update(WKEL_Outreach_Store::table('messages'), ['status' => 'failed'], ['id' => $id]);
             return new WP_Error('audit_failed', 'Audit could not be saved; delivery was blocked.');
         }
@@ -247,8 +270,29 @@ class WKEL_Outreach {
             $action = sanitize_key($_POST['wkel_outreach_action'] ?? '');
             switch ($action) {
                 case 'settings':
+                    $raw_recipients = wp_unslash($_POST['test_recipients'] ?? '');
+                    $parts = preg_split('/[\\r\\n,;]+/', (string) $raw_recipients) ?: [];
+                    $recipients = [];
+                    $invalid = [];
+                    foreach ($parts as $part) {
+                        $candidate = trim($part);
+                        if ($candidate === '') continue;
+                        $email = strtolower(sanitize_email($candidate));
+                        if (!is_email($email)) $invalid[] = $candidate;
+                        else $recipients[$email] = $email;
+                    }
+                    if ($invalid) {
+                        $result = new WP_Error('test_recipients', 'Test recipient list contains an invalid email address. No settings were changed.');
+                        break;
+                    }
+                    if (!empty($_POST['test_mode']) && !$recipients) {
+                        $result = new WP_Error('test_recipients', 'Add at least one test recipient before enabling test mode.');
+                        break;
+                    }
                     update_option('wkel_outreach_enabled', !empty($_POST['enabled']) ? '1' : '0');
                     update_option('wkel_outreach_dry_run', !empty($_POST['dry_run']) ? '1' : '0');
+                    update_option('wkel_outreach_test_mode', !empty($_POST['test_mode']) ? '1' : '0');
+                    update_option('wkel_outreach_test_recipients', implode("\\n", array_values($recipients)));
                     $result = 'Outreach settings saved.';
                     break;
                 case 'add':
@@ -283,9 +327,12 @@ class WKEL_Outreach {
         echo '<div class="wrap"><h1>Outreach</h1><p>Stage leads, approve templates, preview and explicitly send one email at a time. Bulk sending is disabled.</p>';
         if ($result !== null) echo '<div class="notice ' . (is_wp_error($result) ? 'notice-error' : 'notice-success') . '"><p>' . esc_html(is_wp_error($result) ? $result->get_error_message() : (string) $result) . '</p></div>';
         echo '<form method="post">'; wp_nonce_field('wkel_outreach');
-        echo '<input type="hidden" name="wkel_outreach_action" value="settings"><label><input type="checkbox" name="enabled" value="1" ' . checked(get_option('wkel_outreach_enabled'), '1', false) . '> Enable Outreach on this installation</label> <label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run</label> ';
+        echo '<input type="hidden" name="wkel_outreach_action" value="settings"><p><label><input type="checkbox" name="enabled" value="1" ' . checked(get_option('wkel_outreach_enabled'), '1', false) . '> Enable Outreach on this installation</label> <label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal outreach</label></p>';
+        echo '<p><label><input type="checkbox" name="test_mode" value="1" ' . checked(get_option('wkel_outreach_test_mode', '0'), '1', false) . '> Enable internal test sending (allowlisted recipients only)</label></p>';
+        echo '<p><label for="wkel-test-recipients"><strong>Allowed test email addresses</strong></label><br><textarea id="wkel-test-recipients" name="test_recipients" rows="3" class="large-text" placeholder="One email address per line">' . esc_textarea((string) get_option('wkel_outreach_test_recipients', '')) . '</textarea><br><span class="description">Test mode sends only to the exact addresses listed here, one lead at a time. It does not unlock campaign recipients.</span></p>';
         submit_button('Save mode', 'secondary', 'submit', false); echo '</form>';
-        if (!defined('WKEL_OUTREACH_ALLOW_LIVE') || WKEL_OUTREACH_ALLOW_LIVE !== true) echo '<p><strong>Live delivery is locked by server configuration. All sends are dry runs.</strong></p>';
+        if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-warning inline"><p><strong>INTERNAL TEST MODE:</strong> real emails can be sent only to the allowlisted addresses above. Other recipient addresses are blocked. Normal campaign sending remains under the server lock.</p></div>';
+        elseif (!defined('WKEL_OUTREACH_ALLOW_LIVE') || WKEL_OUTREACH_ALLOW_LIVE !== true) echo '<p><strong>Normal campaign delivery remains locked by server configuration.</strong></p>';
         echo '<h2>Add a draft lead</h2><form method="post">'; wp_nonce_field('wkel_outreach');
         echo '<input type="hidden" name="wkel_outreach_action" value="add"><label>Name <input name="name" placeholder="Name"></label> <label>Organisation <input name="organisation" placeholder="Organisation"></label> <label>Email <input name="email" type="email" placeholder="Email" required></label> ';
         submit_button('Add to staging', 'secondary', 'submit', false); echo '</form>';
@@ -303,7 +350,9 @@ class WKEL_Outreach {
             echo '<iframe title="Formatted email preview" sandbox="" referrerpolicy="no-referrer" style="width:100%;height:420px;background:white;border:1px solid #ccc" srcdoc="' . esc_attr('<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><meta charset="utf-8">' . $preview['payload']['html']) . '"></iframe>';
             echo '<form method="post">'; wp_nonce_field('wkel_outreach');
             echo '<input type="hidden" name="wkel_outreach_action" value="send"><input type="hidden" name="lead_id" value="' . esc_attr($lead) . '"><input type="hidden" name="preview_token" value="' . esc_attr($preview['token']) . '">';
-            submit_button('Send this email', 'primary', 'submit', false); echo '</form>';
+            $test_preview = get_option('wkel_outreach_test_mode', '0') === '1' && self::is_test_recipient($preview['payload']['to'][0]);
+            if ($test_preview) echo '<p><strong>TEST SEND:</strong> this message will be delivered only to the allowlisted test address shown above.</p>';
+            submit_button($test_preview ? 'Send TEST email' : 'Send this email', 'primary', 'submit', false); echo '</form>';
         }
         if ($lead && get_post_type($lead) === 'wkel_lead') {
             echo '<h3>Message history</h3><table class="widefat"><tr><th>ID / mode</th><th>Status / delivery</th><th>Resend ID</th><th>Created / outcome</th></tr>';
