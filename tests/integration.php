@@ -150,6 +150,7 @@ $result = WKEL_Outreach::send(preview($blocked_test, $t));
 check(is_wp_error($result) && $result->get_error_code() === 'test_recipient_not_allowed' && count($GLOBALS['wkel_http_calls']) === $before_test_send + 1, 'test mode blocks every recipient outside the exact allowlist');
 update_option('wkel_outreach_test_mode', '0');
 update_option('wkel_outreach_test_recipients', '');
+update_option('wkel_outreach_dry_run', '0');
 foreach (['rejected', 'timeout', 'malformed'] as $mode) {
     $GLOBALS['wkel_mock'] = $mode; $l = lead($mode); $result = WKEL_Outreach::send(preview($l, $t));
     check(is_wp_error($result) && message($l)['status'] === 'failed', 'mocked ' . $mode . ' failure recorded');
