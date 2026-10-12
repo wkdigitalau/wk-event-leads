@@ -173,6 +173,7 @@ class WKEL_Outreach {
         $payload = self::payload($lead, $template);
         if (is_wp_error($payload)) return self::reject($lead, $payload->get_error_code());
         if (!hash_equals($preview['fingerprint'], self::fingerprint($lead, $template, $payload))) return self::reject($lead, 'preview_changed');
+        if (get_option('wkel_outreach_test_mode', '0') === '1' && ($mode !== 'test' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
         if ($mode === 'test' && (get_option('wkel_outreach_test_mode', '0') !== '1' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
         if ($mode === 'live' && (get_option('wkel_outreach_test_mode', '0') === '1' || !defined('WKEL_OUTREACH_ALLOW_LIVE') || WKEL_OUTREACH_ALLOW_LIVE !== true || get_option('wkel_outreach_dry_run', '1') !== '0')) return self::reject($lead, 'live_send_locked');
         if ($mode === 'live' && self::is_test_recipient($payload['to'][0])) return self::reject($lead, 'test_contact_wrong_tab');
