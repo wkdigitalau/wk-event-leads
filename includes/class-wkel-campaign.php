@@ -125,7 +125,7 @@ class WKEL_Campaign {
             <?php endif; ?>
 
             <h2><?php esc_html_e('Import campaign contacts', 'wk-event-leads'); ?></h2>
-            <p><?php esc_html_e('Upload a CSV with headers. Recommended columns: email, name, organisation, campaign, list_type, segment, role.', 'wk-event-leads'); ?></p>
+            <p><?php esc_html_e('Upload a CSV with headers. Recommended columns: email, name, organisation, campaign, list_type, segment, role, personalisation_note. Add a unique, factual opening note in personalisation_note if the selected email template uses {{personalisation_note}}.', 'wk-event-leads'); ?></p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
                 <?php wp_nonce_field('wkel_import_campaign_contacts'); ?>
                 <input type="hidden" name="action" value="wkel_import_campaign_contacts">
@@ -186,7 +186,7 @@ class WKEL_Campaign {
             wp_die(__('Invalid nonce.', 'wk-event-leads'));
         }
         if (empty($_FILES['wkel_campaign_csv']['tmp_name']) || !is_uploaded_file($_FILES['wkel_campaign_csv']['tmp_name'])) {
-            wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&imported=0&skipped=1'));
+            wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&tab=live&imported=0&skipped=1'));
             exit;
         }
 
@@ -197,7 +197,7 @@ class WKEL_Campaign {
         $skipped = 0;
 
         if (!$handle) {
-            wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&imported=0&skipped=1'));
+            wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&tab=live&imported=0&skipped=1'));
             exit;
         }
 
@@ -221,6 +221,7 @@ class WKEL_Campaign {
                 'list_type'    => sanitize_key($data['list_type'] ?? $default_list_type),
                 'segment'      => sanitize_text_field($data['segment'] ?? ''),
                 'role'         => sanitize_text_field($data['role'] ?? $data['title'] ?? ''),
+                'personalisation_note' => sanitize_textarea_field($data['personalisation_note'] ?? $data['personalization_note'] ?? $data['opening_note'] ?? ''),
             ]);
 
             if ($lead_id) {
@@ -231,7 +232,7 @@ class WKEL_Campaign {
         }
 
         fclose($handle);
-        wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&imported=' . $imported . '&skipped=' . $skipped));
+        wp_safe_redirect(admin_url('admin.php?page=wkel_outreach&tab=live&imported=' . $imported . '&skipped=' . $skipped));
         exit;
     }
 
@@ -435,6 +436,7 @@ class WKEL_Campaign {
         update_post_meta($lead_id, '_wkel_list_type', sanitize_key($contact['list_type'] ?? ''));
         update_post_meta($lead_id, '_wkel_segment', sanitize_text_field($contact['segment'] ?? ''));
         update_post_meta($lead_id, '_wkel_role', sanitize_text_field($contact['role'] ?? ''));
+        update_post_meta($lead_id, '_wkel_personalisation_note', sanitize_textarea_field($contact['personalisation_note'] ?? ''));
         update_post_meta($lead_id, '_wkel_marketing_status', get_post_meta($lead_id, '_wkel_marketing_status', true) ?: 'unknown');
         update_post_meta($lead_id, '_wkel_imported_at', get_post_meta($lead_id, '_wkel_imported_at', true) ?: time());
         update_post_meta($lead_id, '_wkel_email_status', get_post_meta($lead_id, '_wkel_email_status', true) ?: 'draft');
