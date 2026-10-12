@@ -53,8 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/build-release.py
-          VERSION="$(python3 -c 'import re; print(re.search(r"define\\(\\x27WKEL_VERSION\\x27,\\s*\\x27([^\\x27]+)", open("wk-event-leads.php", encoding="utf-8").read()).group(1))')"
-          test "$VERSION" = "$EXPECTED_VERSION"
+          VERSION="$(sed -n "s/.*define('WKEL_VERSION',[[:space:]]*'\([^']*\)'.*/\1/p" wk-event-leads.php)"
+          test -n "$VERSION" && test "$VERSION" = "$EXPECTED_VERSION"
           ARCHIVE="dist/wk-event-leads-$VERSION.zip"
           test -s "$ARCHIVE"
           unzip -q "$ARCHIVE" -d release-stage
@@ -94,7 +94,7 @@ jobs:
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
+          key: ${{ env.DEPLOY_KEY }}
           source: wkel-release.tar.gz,wkel-release.tar.gz.sha256
           target: ${{ env.DEPLOY_PATH }}/.wkel-release
       - name: Install verified package and keep delivery locked
@@ -102,7 +102,7 @@ jobs:
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
+          key: ${{ env.DEPLOY_KEY }}
           envs: DEPLOY_PATH,DEPLOY_SITE
           script: |
             set -eu
