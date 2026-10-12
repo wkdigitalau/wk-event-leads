@@ -8,12 +8,8 @@ on:
         required: true
         type: choice
         options: [connect, cofo, wkdigital]
-      release_tag:
-        description: Immutable approved release tag (for example v1.4.0)
-        required: true
-        type: string
-      release_sha256:
-        description: SHA-256 of the approved release ZIP
+      expected_version:
+        description: Plugin version to deploy (for example 1.4.3)
         required: true
         type: string
       approved:
@@ -31,7 +27,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ inputs.approved }}
+    if: ${{ inputs.approved && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.site }}-production
     env:
@@ -40,34 +36,33 @@ jobs:
       DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       DEPLOY_SITE: ${{ inputs.site }}
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
     steps:
-      - name: Validate release tag and isolated deployment configuration
-        env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
+      - name: Validate version and isolated deployment configuration
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
           test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_KEY" && test -n "$DEPLOY_PATH"
           [[ "$DEPLOY_PATH" = /*/wp-content/plugins/wk-event-leads ]] || exit 1
-      - name: Checkout the same immutable release for every site
+      - name: Check out the exact reviewed workflow commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Download and verify the one approved release artifact
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          RELEASE_SHA256: ${{ inputs.release_sha256 }}
+      - name: Build and verify the release package on the runner
         run: |
           set -euo pipefail
-          [[ "$RELEASE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || exit 1
-          ARCHIVE="wk-event-leads-${RELEASE_TAG#v}.zip"
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ARCHIVE" --dir downloaded
-          printf '%s  %s\n' "$RELEASE_SHA256" "downloaded/$ARCHIVE" | sha256sum -c -
-          unzip -q "downloaded/$ARCHIVE" -d release-stage
+          python3 scripts/build-release.py
+          VERSION="$(python3 -c 'import re; print(re.search(r"define\\(\\x27WKEL_VERSION\\x27,\\s*\\x27([^\\x27]+)", open("wk-event-leads.php", encoding="utf-8").read()).group(1))')"
+          test "$VERSION" = "$EXPECTED_VERSION"
+          ARCHIVE="dist/wk-event-leads-$VERSION.zip"
+          test -s "$ARCHIVE"
+          unzip -q "$ARCHIVE" -d release-stage
+          test -s release-stage/wk-event-leads/wk-event-leads.php
           tar --sort=name --mtime='UTC 2020-01-01' --owner=0 --group=0 --numeric-owner -czf wkel-release.tar.gz -C release-stage/wk-event-leads .
           sha256sum wkel-release.tar.gz > wkel-release.tar.gz.sha256
+          echo "Built version $VERSION from commit $GITHUB_SHA"
+          sha256sum "$ARCHIVE" wkel-release.tar.gz
       - name: Back up the selected site's database, configuration and plugin
         uses: appleboy/ssh-action@v1
         with:
@@ -82,7 +77,7 @@ jobs:
             WP_ROOT="$(dirname "$(dirname "$(dirname "$PLUGIN")")")"
             test -f "$WP_ROOT/wp-config.php" && test -d "$PLUGIN"
             command -v wp >/dev/null
-            case "$DEPLOY_SITE" in connect) EXPECTED=https://connect.digitalp.com.au;; cofo) EXPECTED=https://cofopartners.com;; wkdigital) EXPECTED=https://wkdigital.com.au;; *) exit 1;; esac
+            case "$DEPLOY_SITE" in connect) EXPECTED=https://connect.digitalp.com.au;; cofo) EXPECTED=https://cofopartners.com;; wkdigital) EXPECTED=https://wkdigital.com.au;; *) exit 1 ;; esac
             SITE_URL="$(wp option get home --path="$WP_ROOT" --allow-root)"
             test "${SITE_URL%/}" = "$EXPECTED"
             BACKUP_DIR="$HOME/wkel-backups/$DEPLOY_SITE/$(date -u +%Y%m%dT%H%M%SZ)"
@@ -99,7 +94,7 @@ jobs:
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_KEY }}
+          key: ${{ secrets.DEPLOY_KEY }}
           source: wkel-release.tar.gz,wkel-release.tar.gz.sha256
           target: ${{ env.DEPLOY_PATH }}/.wkel-release
       - name: Install verified package and keep delivery locked
@@ -107,7 +102,7 @@ jobs:
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_KEY }}
+          key: ${{ secrets.DEPLOY_KEY }}
           envs: DEPLOY_PATH,DEPLOY_SITE
           script: |
             set -eu
@@ -119,7 +114,7 @@ jobs:
             tar -xzf wkel-release.tar.gz -C "$PLUGIN"
             find "$PLUGIN" -type f -not -path '*/.wkel-release/*' -exec chmod 644 {} +
             find "$PLUGIN" -type d -exec chmod 755 {} +
-            # The reproducible archive has a fixed 2020 mtime; refresh PHP mtimes so PHP-FPM OPcache detects this deployment.
+            # Refresh PHP mtimes so PHP-FPM OPcache detects this deployment.
             find "$PLUGIN" -type f -name '*.php' -not -path '*/.wkel-release/*' -exec touch {} +
             test "$(stat -c %Y "$PLUGIN/includes/class-wkel-outreach.php")" -gt "$(date -d '1 minute ago' +%s)"
             grep -Fq 'Enable internal test sending' "$PLUGIN/includes/class-wkel-outreach.php"
