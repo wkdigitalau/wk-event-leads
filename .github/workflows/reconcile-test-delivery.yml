@@ -23,24 +23,24 @@ jobs:
       DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
       DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       TEST_EMAIL: amandarodgers09@gmail.com
-      TEST_LEAD_ID: "41"
-      RESEND_ID: 01a11e74-fc4f-7f0c-8e59-99793ec4928d
+      TEST_LEAD_IDS: "39,41"
+      RESEND_IDS: "01a118f2-b467-7014-9a73-d714df670c60,01a11e74-fc4f-7f0c-8e59-99793ec4928d"
     steps:
-      - name: Validate exact Connect test record
+      - name: Validate exact Connect test records
         run: |
           set -euo pipefail
           test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER" && test -n "$DEPLOY_KEY" && test -n "$DEPLOY_PATH"
           [[ "$DEPLOY_PATH" = /*/wp-content/plugins/wk-event-leads ]] || exit 1
           test "$TEST_EMAIL" = "amandarodgers09@gmail.com"
-          test "$TEST_LEAD_ID" = "41"
-          test "$RESEND_ID" = "01a11e74-fc4f-7f0c-8e59-99793ec4928d"
-      - name: Back up Connect database and reconcile provider-confirmed delivery
+          test "$TEST_LEAD_IDS" = "39,41"
+          test "$RESEND_IDS" = "01a118f2-b467-7014-9a73-d714df670c60,01a11e74-fc4f-7f0c-8e59-99793ec4928d"
+      - name: Back up Connect database and reconcile provider-confirmed deliveries
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ env.DEPLOY_HOST }}
           username: ${{ env.DEPLOY_USER }}
           key: ${{ env.DEPLOY_KEY }}
-          envs: DEPLOY_PATH,TEST_EMAIL,TEST_LEAD_ID,RESEND_ID
+          envs: DEPLOY_PATH,TEST_EMAIL,TEST_LEAD_IDS,RESEND_IDS
           script: |
             set -eu
             PLUGIN="$(realpath "$DEPLOY_PATH")"
@@ -57,34 +57,43 @@ jobs:
             wp eval '
               global $wpdb;
               $email = strtolower(trim(sanitize_email((string) getenv("TEST_EMAIL"))));
-              $lead = (int) getenv("TEST_LEAD_ID");
-              $resend = (string) getenv("RESEND_ID");
-              if ($email !== "amandarodgers09@gmail.com" || $lead !== 41 || $resend !== "01a11e74-fc4f-7f0c-8e59-99793ec4928d") throw new RuntimeException("Unexpected target; no changes made.");
+              $lead_ids = array_map("intval", explode(",", (string) getenv("TEST_LEAD_IDS")));
+              $resend_ids = explode(",", (string) getenv("RESEND_IDS"));
+              $expected = [39 => "01a118f2-b467-7014-9a73-d714df670c60", 41 => "01a11e74-fc4f-7f0c-8e59-99793ec4928d"];
+              if ($email !== "amandarodgers09@gmail.com" || $lead_ids !== [39, 41] || $resend_ids !== array_values($expected)) throw new RuntimeException("Unexpected target; no changes made.");
               if (get_option("wkel_outreach_test_mode", "0") !== "1") throw new RuntimeException("Internal test mode is not enabled; no changes made.");
               $allowed = preg_split("/[\\r\\n,;]+/", (string) get_option("wkel_outreach_test_recipients", "")) ?: [];
               if (!in_array($email, array_map(fn($v) => strtolower(trim(sanitize_email($v))), $allowed), true)) throw new RuntimeException("Target is not allowlisted; no changes made.");
-              if (get_post_type($lead) !== "wkel_lead" || strtolower(trim(WKEL_Email::get_lead_email($lead))) !== $email) throw new RuntimeException("Lead/email mismatch; no changes made.");
-              $messages = WKEL_Outreach_Store::table("messages");
-              $message = $wpdb->get_row($wpdb->prepare("SELECT id,mode,status,delivery,created_at FROM {$messages} WHERE lead_id=%d AND resend_id=%s", $lead, $resend), ARRAY_A);
-              if (!$message || $message["mode"] !== "live" || $message["status"] !== "failed" || $message["delivery"] !== "legacy") throw new RuntimeException("Expected legacy failed message not found; no changes made.");
               $hash = hash("sha256", $email);
               $matching_leads = get_posts(["post_type" => "wkel_lead", "post_status" => ["publish", "draft", "private", "pending", "trash"], "posts_per_page" => -1, "fields" => "ids", "meta_query" => [["key" => "_wkel_email_hash", "value" => $hash]]]);
-              if (array_map("intval", $matching_leads) !== [$lead]) throw new RuntimeException("More than one Connect lead matches this address; no changes made.");
-              if (get_post_meta($lead, "_wkel_marketing_status", true) === "unsubscribed") throw new RuntimeException("Lead has an unsubscribe status; no changes made.");
-              if (get_post_meta($lead, "_wkel_email_status", true) !== "failed" || get_post_meta($lead, "_wkel_outreach_status", true) !== "failed") throw new RuntimeException("Lead status changed since diagnosis; no changes made.");
+              $matching_leads = array_map("intval", $matching_leads);
+              sort($matching_leads);
+              if ($matching_leads !== $lead_ids) throw new RuntimeException("Matching lead set changed; no changes made.");
+              $messages = WKEL_Outreach_Store::table("messages");
+              $rows = [];
+              foreach ($expected as $lead => $resend) {
+                if (get_post_type($lead) !== "wkel_lead" || strtolower(trim(WKEL_Email::get_lead_email($lead))) !== $email) throw new RuntimeException("Lead/email mismatch; no changes made.");
+                if (get_post_meta($lead, "_wkel_marketing_status", true) === "unsubscribed") throw new RuntimeException("A matching lead has an unsubscribe status; no changes made.");
+                if (get_post_meta($lead, "_wkel_email_status", true) !== "failed" || get_post_meta($lead, "_wkel_outreach_status", true) !== "failed") throw new RuntimeException("A matching lead status changed since diagnosis; no changes made.");
+                $message = $wpdb->get_row($wpdb->prepare("SELECT id,mode,status,delivery,created_at FROM {$messages} WHERE lead_id=%d AND resend_id=%s", $lead, $resend), ARRAY_A);
+                if (!$message || $message["mode"] !== "live" || $message["status"] !== "failed" || $message["delivery"] !== "legacy") throw new RuntimeException("Expected provider-confirmed legacy message not found for lead {$lead}; no changes made.");
+                $rows[$lead] = $message;
+              }
               $suppression = WKEL_Outreach_Store::table("suppression");
-              $reason = $wpdb->get_var($wpdb->prepare("SELECT reason FROM {$suppression} WHERE email_hash=%s", $hash));
-              if ($reason && $reason !== "failed") throw new RuntimeException("Suppression is not failed-only; no changes made.");
+              $reasons = $wpdb->get_col($wpdb->prepare("SELECT reason FROM {$suppression} WHERE email_hash=%s", $hash));
+              if ($reasons && $reasons !== ["failed"]) throw new RuntimeException("Suppression is not failed-only; no changes made.");
               $wpdb->query("START TRANSACTION");
               try {
-                if ($reason === "failed" && $wpdb->delete($suppression, ["email_hash" => $hash, "reason" => "failed"], ["%s", "%s"]) !== 1) throw new RuntimeException("Failed-only suppression row did not match; no changes committed.");
-                if ($wpdb->update($messages, ["status" => "sent", "delivery" => "delivered", "sent_at" => (int) $message["created_at"], "outcome_at" => (int) $message["created_at"]], ["id" => (int) $message["id"], "status" => "failed"], ["%s", "%s", "%d", "%d"], ["%d", "%s"]) !== 1) throw new RuntimeException("Legacy message changed unexpectedly; no changes committed.");
-                update_post_meta($lead, "_wkel_email_status", "sent");
-                update_post_meta($lead, "_wkel_outreach_status", "sent");
-                if (get_post_meta($lead, "_wkel_email_status", true) !== "sent" || get_post_meta($lead, "_wkel_outreach_status", true) !== "sent") throw new RuntimeException("Lead status reconciliation failed; no changes committed.");
-                if (!WKEL_Outreach_Store::audit($lead, (int) $message["id"], "provider_verified_delivered", $resend)) throw new RuntimeException("Audit write failed; no changes committed.");
+                if ($reasons && $wpdb->delete($suppression, ["email_hash" => $hash, "reason" => "failed"], ["%s", "%s"]) !== 1) throw new RuntimeException("Failed-only suppression row did not match; no changes committed.");
+                foreach ($rows as $lead => $message) {
+                  if ($wpdb->update($messages, ["status" => "sent", "delivery" => "delivered", "sent_at" => (int) $message["created_at"], "outcome_at" => (int) $message["created_at"]], ["id" => (int) $message["id"], "status" => "failed"], ["%s", "%s", "%d", "%d"], ["%d", "%s"]) !== 1) throw new RuntimeException("Legacy message changed unexpectedly; no changes committed.");
+                  update_post_meta($lead, "_wkel_email_status", "sent");
+                  update_post_meta($lead, "_wkel_outreach_status", "sent");
+                  if (get_post_meta($lead, "_wkel_email_status", true) !== "sent" || get_post_meta($lead, "_wkel_outreach_status", true) !== "sent") throw new RuntimeException("Lead status reconciliation failed; no changes committed.");
+                  if (!WKEL_Outreach_Store::audit($lead, (int) $message["id"], "provider_verified_delivered", $expected[$lead])) throw new RuntimeException("Audit write failed; no changes committed.");
+                }
                 if ($wpdb->query("COMMIT") === false) throw new RuntimeException("Database commit failed.");
               } catch (Throwable $e) { $wpdb->query("ROLLBACK"); throw $e; }
-              echo "Reconciled one Resend-confirmed delivery; no email was sent." . PHP_EOL;
+              echo "Reconciled two Resend-confirmed test deliveries; no email was sent." . PHP_EOL;
             ' --path="$WP_ROOT" --allow-root
             echo "Verified database backup: $BACKUP_DIR/database.sql"
