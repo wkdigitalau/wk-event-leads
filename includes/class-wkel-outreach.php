@@ -20,7 +20,7 @@ class WKEL_Outreach {
      * Published real leads with a recorded live send remain untouched.
      */
     private static function migrate_pipeline_staging(): void {
-        if (get_option('wkel_pipeline_staging_migrated_146') === '1') return;
+        if (get_option('wkel_test_pipeline_migrated_146') === '1') return;
         global $wpdb;
         $ids = get_posts([
             'post_type' => 'wkel_lead',
@@ -50,18 +50,14 @@ class WKEL_Outreach {
                 $id,
                 'test'
             ));
-            if ($campaign !== '') {
-                update_post_meta($id, '_wkel_campaign_staged', '1');
-            } elseif (!$test_send && !($source === 'outreach' && self::is_test_recipient($email))) {
-                continue;
-            } else {
-                update_post_meta($id, '_wkel_test_contact', '1');
-            }
+            if ($campaign !== '') continue;
+            if (!$test_send && !($source === 'outreach' && self::is_test_recipient($email))) continue;
+            update_post_meta($id, '_wkel_test_contact', '1');
 
             $updated = wp_update_post(['ID' => $id, 'post_status' => 'draft'], true);
             if (is_wp_error($updated) || !$updated) $complete = false;
         }
-        if ($complete) update_option('wkel_pipeline_staging_migrated_146', '1', false);
+        if ($complete) update_option('wkel_test_pipeline_migrated_146', '1', false);
     }
 
     public static function menu(): void {
@@ -488,7 +484,7 @@ class WKEL_Outreach {
             echo '<section class="wkel-outreach-card"><h2>Campaign readiness</h2>';
             if (!$live_send_ready) echo '<div class="notice notice-warning inline"><p><strong>Live sending is not ready.</strong> You can import contacts and preview emails here, but delivery stays blocked until Outreach is enabled, migration is complete, test mode and dry run are off, and the server-side live-send lock is open.</p></div>';
             else echo '<p>Live sending is enabled. Each email is still sent individually, only after preview and confirmation.</p>';
-            echo '</section><section class="wkel-outreach-card"><h2>1. Import campaign contacts</h2><p>Upload the approved campaign CSV. Importing stages contacts outside the Pipeline and does not send email; a contact enters the Pipeline only after a live email is accepted.</p>';
+            echo '</section><section class="wkel-outreach-card"><h2>1. Import campaign contacts</h2><p>Upload the approved campaign CSV. Importing does not send email.</p>';
             WKEL_Campaign::render_admin_page(); echo '</section>';
             echo '<section class="wkel-outreach-card"><h2>2. Preview and send one campaign email</h2>';
             if (!$live_leads) echo '<p>No imported campaign contacts are available on this page yet. Upload the approved CSV above first.</p>';
