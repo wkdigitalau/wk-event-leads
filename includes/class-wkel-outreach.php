@@ -12,6 +12,49 @@ class WKEL_Outreach {
         } elseif ((int) get_option('wkel_migration_lock') < time() - 300) {
             delete_option('wkel_migration_lock');
         }
+        self::migrate_pipeline_staging();
+    }
+
+    /**
+     * Move historical test-only contacts out of the live Pipeline.
+     * Published real leads with a recorded live send remain untouched.
+     */
+    private static function migrate_pipeline_staging(): void {
+        if (get_option('wkel_test_pipeline_migrated_146') === '1') return;
+        global $wpdb;
+        $ids = get_posts([
+            'post_type' => 'wkel_lead',
+            'post_status' => 'publish',
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'meta_query' => [['key' => '_wkel_outreach_enrolled', 'value' => '1']],
+        ]);
+        $complete = true;
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            $live_send = (int) $wpdb->get_var($wpdb->prepare(
+                'SELECT COUNT(*) FROM ' . WKEL_Outreach_Store::table('messages') . ' WHERE lead_id = %d AND mode = %s AND sent_at > 0',
+                $id,
+                'live'
+            ));
+            if ($live_send > 0) continue;
+
+            $campaign = (string) get_post_meta($id, '_wkel_campaign', true);
+            $email = WKEL_Email::get_lead_email($id);
+            $source = (string) get_post_meta($id, '_wkel_source', true);
+            $test_send = (int) $wpdb->get_var($wpdb->prepare(
+                'SELECT COUNT(*) FROM ' . WKEL_Outreach_Store::table('messages') . ' WHERE lead_id = %d AND mode = %s AND sent_at > 0',
+                $id,
+                'test'
+            ));
+            if ($campaign !== '') continue;
+            if (!$test_send && !($source === 'outreach' && self::is_test_recipient($email))) continue;
+            update_post_meta($id, '_wkel_test_contact', '1');
+
+            $updated = wp_update_post(['ID' => $id, 'post_status' => 'draft'], true);
+            if (is_wp_error($updated) || !$updated) $complete = false;
+        }
+        if ($complete) update_option('wkel_test_pipeline_migrated_146', '1', false);
     }
 
     public static function menu(): void {
@@ -269,9 +312,34 @@ class WKEL_Outreach {
         update_post_meta($lead, '_wkel_email_status', 'sent');
         update_post_meta($lead, '_wkel_resend_email_id', $resend);
         update_post_meta($lead, '_wkel_email_sent_at', time());
+        if ($mode === 'live' && get_post_status($lead) !== 'publish') {
+            $promoted = wp_update_post(['ID' => $lead, 'post_status' => 'publish'], true);
+            if (is_wp_error($promoted) || !$promoted) {
+                WKEL_Outreach_Store::audit($lead, $id, 'campaign_promotion_failed');
+                WKEL_Submission::log_activity($lead, 'outreach_sent', 'Resend accepted the live campaign email, but the staged contact could not be published to the Pipeline. Do not resend.');
+                return new WP_Error('campaign_promotion_failed', 'Resend accepted the email, but the contact could not be added to the Pipeline. Check its history; do not resend.');
+            }
+            delete_post_meta($lead, '_wkel_campaign_staged');
+        }
         WKEL_Outreach_Store::audit($lead, $id, 'send_accepted');
         WKEL_Submission::log_activity($lead, 'outreach_sent', 'Outreach email accepted by Resend.', $resend);
         return 'Email accepted by Resend. Delivery outcome will appear in the history.';
+    }
+
+    private static function find_test_contact(string $email): int {
+        $hash = hash('sha256', strtolower(trim(sanitize_email($email))));
+        if (!$hash) return 0;
+        $ids = get_posts([
+            'post_type' => 'wkel_lead',
+            'post_status' => ['draft', 'publish'],
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_query' => ['relation' => 'AND',
+                ['key' => '_wkel_test_contact', 'value' => '1'],
+                ['key' => '_wkel_email_hash', 'value' => $hash],
+            ],
+        ]);
+        return !empty($ids) ? (int) $ids[0] : 0;
     }
 
     private static function update_test_contact_identity(int $lead_id, string $name, string $organisation): void {
@@ -323,12 +391,24 @@ class WKEL_Outreach {
                     if (!self::is_test_recipient($email)) { $result = new WP_Error('test_recipient_not_allowed', 'Choose an email address from the saved test-recipient allowlist.'); break; }
                     $name = sanitize_text_field(wp_unslash($_POST['name'] ?? ''));
                     $organisation = sanitize_text_field(wp_unslash($_POST['organisation'] ?? ''));
-                    $lead = WKEL_Submission::find_lead_by_email($email);
-                    if (!$lead) $lead = WKEL_Submission::create_lead(['wkel_email' => $email,
-                        'wkel_name' => $name,
-                        'wkel_organisation' => $organisation], 'outreach', '', 'outreach', 'other');
+                    $lead = self::find_test_contact($email);
+                    if (!$lead) {
+                        $lead = WKEL_Submission::create_lead(['wkel_email' => $email,
+                            'wkel_name' => $name,
+                            'wkel_organisation' => $organisation], 'outreach', '', 'outreach', 'other');
+                        if (!is_wp_error($lead)) {
+                            $drafted = wp_update_post(['ID' => $lead, 'post_status' => 'draft'], true);
+                            if (is_wp_error($drafted) || !$drafted) {
+                                $result = new WP_Error('test_contact_staging', 'Could not keep the test contact out of the live Pipeline.');
+                                $lead = 0;
+                                break;
+                            }
+                        }
+                    }
                     if (is_wp_error($lead)) { $result = $lead; $lead = 0; break; }
                     self::update_test_contact_identity($lead, $name, $organisation);
+                    update_post_meta($lead, '_wkel_test_contact', '1');
+                    delete_post_meta($lead, '_wkel_campaign_staged');
                     update_post_meta($lead, '_wkel_outreach_enrolled', '1');
                     update_post_meta($lead, '_wkel_personalisation_note', sanitize_textarea_field(wp_unslash($_POST['personalisation_note'] ?? '')));
                     $result = 'Lead staged. No email sent.';
@@ -347,7 +427,7 @@ class WKEL_Outreach {
         }
         $templates = get_posts(['post_type' => 'wkel_template', 'post_status' => 'private', 'posts_per_page' => -1]);
         $page = max(1, absint($_GET['wkel_outreach_page'] ?? 1));
-        $leads = get_posts(['post_type' => 'wkel_lead', 'post_status' => 'publish', 'posts_per_page' => 51, 'offset' => ($page - 1) * 50, 'orderby' => 'ID', 'order' => 'DESC',
+        $leads = get_posts(['post_type' => 'wkel_lead', 'post_status' => ['publish', 'draft'], 'posts_per_page' => 51, 'offset' => ($page - 1) * 50, 'orderby' => 'ID', 'order' => 'DESC',
             'meta_query' => ['relation' => 'OR', ['key' => '_wkel_outreach_enrolled', 'value' => '1'], ['key' => '_wkel_campaign', 'compare' => 'EXISTS']]]);
         $has_next = count($leads) > 50;
         $leads = array_slice($leads, 0, 50);
@@ -357,8 +437,16 @@ class WKEL_Outreach {
             && get_option('wkel_outreach_test_mode', '0') !== '1'
             && get_option('wkel_outreach_dry_run', '1') === '0'
             && defined('WKEL_OUTREACH_ALLOW_LIVE') && WKEL_OUTREACH_ALLOW_LIVE === true;
-        $test_leads = array_values(array_filter($leads, fn($item) => in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
-        $live_leads = array_values(array_filter($leads, fn($item) => get_post_meta($item->ID, '_wkel_campaign', true) !== '' && !in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
+        $test_leads = array_values(array_filter($leads, fn($item) =>
+            get_post_meta($item->ID, '_wkel_test_contact', true) === '1'
+            && in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)
+        ));
+        $live_leads = array_values(array_filter($leads, fn($item) =>
+            get_post_meta($item->ID, '_wkel_campaign', true) !== ''
+            && get_post_meta($item->ID, '_wkel_test_contact', true) !== '1'
+            && (get_post_status($item->ID) === 'publish' || get_post_meta($item->ID, '_wkel_campaign_staged', true) === '1')
+            && !in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)
+        ));
         $eligible_leads = $tab === 'test' ? $test_leads : ($tab === 'live' ? $live_leads : []);
         if ($lead && !in_array($lead, array_map(static fn($item) => (int) $item->ID, $eligible_leads), true)) $lead = 0;
         echo '<style>.wkel-outreach .wkel-outreach-card{margin:18px 0;padding:20px;background:#fff;border:1px solid #dcdcde;border-radius:6px}.wkel-outreach-card h2{margin-top:0}.wkel-outreach-card label{display:inline-block;margin:6px 10px 6px 0}.wkel-outreach-card select{min-width:min(420px,100%)}.wkel-template-editor label{display:block;width:100%}.wkel-template-editor input[name="template_name"],.wkel-template-editor input[name="subject"],.wkel-template-editor textarea[name="html"]{display:block;width:100%;max-width:100%;box-sizing:border-box}.wkel-template-editor textarea[name="html"]{min-height:360px}.wkel-send-confirm{margin-top:20px;padding:18px;border:2px solid #72aee6;border-radius:6px;background:#f6f9fc}.wkel-send-confirm h3{margin-top:0}</style>';
@@ -378,7 +466,7 @@ class WKEL_Outreach {
             echo '<label for="wkel-test-recipients"><strong>Test recipient email addresses (one per line)</strong></label><textarea id="wkel-test-recipients" name="test_recipients" rows="4" class="large-text" placeholder="reviewer@example.com">' . esc_textarea((string) get_option('wkel_outreach_test_recipients', '')) . '</textarea>';
             submit_button('Save test settings', 'secondary', 'submit', false); echo '</form>';
             if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked by test mode and the separate server lock.</p></div>';
-            echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This stages a contact only. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
+            echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This creates a test-only contact outside the live Pipeline. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
             echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
             foreach (self::test_recipients() as $address) echo '<option value="' . esc_attr($address) . '">' . esc_html($address) . '</option>';
             echo '</select></label></p><p><label for="wkel-test-personalisation">Optional personalisation note</label><textarea id="wkel-test-personalisation" name="personalisation_note" rows="3" class="large-text" placeholder="One short, contact-specific opening sentence"></textarea></p>';
