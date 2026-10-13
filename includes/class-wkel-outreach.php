@@ -418,7 +418,7 @@ class WKEL_Outreach {
         echo '<p><label for="wkel-lead-select">Contact</label><select id="wkel-lead-select" name="lead_id" required><option value="">Choose a contact…</option>';
         foreach ($leads as $item) {
             $contact_vars = WKEL_Email::build_template_vars((int) $item->ID);
-            $contact_name = sanitize_text_field((string) ($contact_vars['full_name'] ?? ''));
+            $contact_name = (string) ($contact_vars['full_name'] ?? '');
             echo '<option value="' . esc_attr($item->ID) . '" ' . selected($lead, $item->ID, false) . '>' . esc_html(($contact_name ?: 'Unnamed contact') . ' — ' . WKEL_Email::get_lead_email($item->ID) . ' [' . (get_post_meta($item->ID, '_wkel_outreach_status', true) ?: 'draft') . ']') . '</option>';
         }
         echo '</select></p><p><label for="wkel-approved-template">Email template</label><select id="wkel-approved-template" name="template_id" required><option value="">Choose an approved template…</option>';
