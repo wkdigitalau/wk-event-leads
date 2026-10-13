@@ -229,7 +229,7 @@ class WKEL_Outreach {
             '', $at, ['message_id' => (int) $row['message_id'], 'link_index' => (int) $row['link_index']]);
         $destination = add_query_arg([
             'utm_source' => 'enp_outreach', 'utm_medium' => 'email',
-            'utm_campaign' => sanitize_key((string) $row['campaign']),
+            'utm_campaign' => 'enp-cold-outreach',
             'utm_content' => 'link-' . absint($row['link_index']),
             'wkel_ref' => $token,
         ], (string) $row['target_url']);
