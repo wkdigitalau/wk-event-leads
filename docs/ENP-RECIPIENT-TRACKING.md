@@ -3,7 +3,7 @@
 ## What this adds
 
 - A live campaign link is rewritten to a unique HTTPS redirect on the Connect WordPress site.
-- The redirect records the request against the exact lead and sent-message row, then redirects only to the configured HTTPS Elite Nurse Partners host and adds non-identifying UTMs.
+- The redirect records the request against the exact lead and sent-message row, then redirects only to the configured HTTPS Elite Nurse Partners host and adds generic UTMs (no per-recipient or free-text campaign label is placed in Google Analytics).
 - The event is intentionally called a **link request**. Email security scanners may request links automatically, so it is not proof that a person read or clicked the email.
 - When the site helper below is installed, it records page paths and explicitly tagged CTA categories against that lead/message. It does not send names, email addresses, the opaque referral token, or full URLs to GA4.
 - The helper removes `wkel_ref` from the address bar before GA4/GTM runs. Keep UTMs; they contain campaign-level values only.
