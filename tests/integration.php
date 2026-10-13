@@ -222,6 +222,7 @@ check(str_contains($ui, 'Test emails') && str_contains($ui, 'Live send') && str_
 $_GET['wkel_outreach_page'] = 2; ob_start(); WKEL_Outreach::render(); $page2 = ob_get_clean();
 check(str_contains($page2, 'Previous contacts'), 'older staged contacts remain reachable by pagination');
 check(str_contains($ui, 'Outreach') && str_contains($ui, 'Preview and send the test') && !str_contains($ui, 'dummy-key-not-valid'), 'Outreach test tab shows its guided send flow without credentials');
+check(str_contains($ui, 'Dummy &lt;Recipient&gt; initial') && str_contains($ui, 'subject only; the message body is the approved template copy'), 'test contact picker shows reviewer names and accurately explains the test subject');
 $log = $wpdb->get_col('SELECT code FROM ' . WKEL_Outreach_Store::table('send_audit'));
 check(!str_contains(implode(' ', $log), 'dummy-key') && !str_contains(implode(' ', $log), 'example.invalid'), 'audit errors contain no credentials or identity');
 WKEL_Settings::register_settings();
