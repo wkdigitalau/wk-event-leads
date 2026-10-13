@@ -115,7 +115,7 @@ class WKEL_Campaign {
                     <p>
                         <?php
                         printf(
-                            esc_html__('Import complete: %1$d contacts tracked, %2$d rows skipped.', 'wk-event-leads'),
+                            esc_html__('Import complete: %1$d contacts staged for outreach, %2$d rows skipped. Staged contacts stay out of Pipeline until a live email is accepted.', 'wk-event-leads'),
                             $imported,
                             $skipped
                         );
@@ -125,7 +125,7 @@ class WKEL_Campaign {
             <?php endif; ?>
 
             <h2><?php esc_html_e('Import campaign contacts', 'wk-event-leads'); ?></h2>
-            <p><?php esc_html_e('Upload a CSV with headers. Recommended columns: email, name, organisation, campaign, list_type, segment, role, personalisation_note. Add a unique, factual opening note in personalisation_note if the selected email template uses {{personalisation_note}}.', 'wk-event-leads'); ?></p>
+            <p><?php esc_html_e('Upload a CSV with headers. Contacts are staged in Outreach and do not appear in Pipeline until their first live email is accepted by Resend. Recommended columns: email, name, organisation, campaign, list_type, segment, role, personalisation_note. Add a unique, factual opening note in personalisation_note if the selected email template uses {{personalisation_note}}.', 'wk-event-leads'); ?></p>
             <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" enctype="multipart/form-data">
                 <?php wp_nonce_field('wkel_import_campaign_contacts'); ?>
                 <input type="hidden" name="action" value="wkel_import_campaign_contacts">
@@ -396,18 +396,38 @@ class WKEL_Campaign {
             return 0;
         }
 
+        // Reuse an existing live record, or an earlier staged campaign import.
+        // Do not let a test-only draft contact be converted into a campaign prospect.
         $lead_id = self::find_lead_by_email_hash($hash);
+        if (!$lead_id) {
+            $staged = get_posts([
+                'post_type'      => 'wkel_lead',
+                'post_status'    => 'draft',
+                'posts_per_page' => 1,
+                'fields'         => 'ids',
+                'meta_query'     => [
+                    'relation' => 'AND',
+                    ['key' => '_wkel_email_hash', 'value' => $hash],
+                    ['key' => '_wkel_campaign_staged', 'value' => '1'],
+                ],
+            ]);
+            $lead_id = !empty($staged) ? (int) $staged[0] : 0;
+        }
         if (!$lead_id) {
             $title = ($contact['organisation'] ?: $contact['name'] ?: $email) . ' - ' . wp_date('Y-m-d');
             $lead_id = wp_insert_post([
                 'post_type'   => 'wkel_lead',
-                'post_status' => 'publish',
+                'post_status' => 'draft',
                 'post_title'  => $title,
             ], true);
 
             if (is_wp_error($lead_id)) {
                 return 0;
             }
+        }
+
+        if (get_post_status((int) $lead_id) !== 'publish') {
+            update_post_meta((int) $lead_id, '_wkel_campaign_staged', '1');
         }
 
         $values = [
