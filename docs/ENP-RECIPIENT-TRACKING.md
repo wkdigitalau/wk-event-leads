@@ -27,7 +27,6 @@ Add this in the `<head>` of every ENP page that can be reached from the campaign
 <script
   src="https://connect.digitalp.com.au/wp-content/plugins/wk-event-leads/assets/js/tracking.js"
   data-endpoint="https://connect.digitalp.com.au/wp-json/wk-event-leads/v1/outreach-activity"
-  defer
 ></script>
 ```
 
