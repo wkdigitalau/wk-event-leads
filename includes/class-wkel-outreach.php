@@ -127,6 +127,17 @@ class WKEL_Outreach {
         return $payload;
     }
 
+    private static function mark_test_payload(array $payload): array {
+        if (empty($payload['subject']) || !preg_match('/^\[TEST\]/i', $payload['subject'])) {
+            $payload['subject'] = '[TEST] ' . ($payload['subject'] ?? '');
+        }
+        if (!str_contains((string) ($payload['html'] ?? ''), 'data-wkel-test-copy')) {
+            $banner = '<div data-wkel-test-copy="1" style="margin:0 0 20px;padding:12px 16px;border:1px solid #d97706;border-left:5px solid #d97706;background:#fff7ed;color:#7c2d12;font:600 14px/1.5 Arial,sans-serif;">TEST EMAIL — Internal review copy only. This is not live campaign outreach.</div>';
+            $payload['html'] = $banner . ($payload['html'] ?? '');
+        }
+        return $payload;
+    }
+
     private static function test_recipients(): array {
         $raw = (string) get_option('wkel_outreach_test_recipients', '');
         $parts = preg_split('/[\\r\\n,;]+/', $raw) ?: [];
@@ -155,6 +166,7 @@ class WKEL_Outreach {
         if (is_wp_error($payload)) return $payload;
         if ($mode === 'test' && (get_option('wkel_outreach_test_mode', '0') !== '1' || !self::is_test_recipient($payload['to'][0]))) return new WP_Error('test_recipient_not_allowed', 'This test can only be previewed for an enabled, allowlisted test address.');
         if ($mode === 'live' && self::is_test_recipient($payload['to'][0])) return new WP_Error('test_contact_wrong_tab', 'This address is on the test allowlist. Use the Test emails tab.');
+        if ($mode === 'test') $payload = self::mark_test_payload($payload);
         $token = wp_generate_uuid4();
         set_transient('wkel_preview_' . $token, ['user' => get_current_user_id(), 'lead' => $lead_id, 'template' => $template_id, 'mode' => $mode,
             'fingerprint' => self::fingerprint($lead_id, $template_id, $payload)], 900);
@@ -172,6 +184,7 @@ class WKEL_Outreach {
         if (get_option('wkel_outreach_migrated') !== '1') return self::reject($lead, 'migration_pending');
         $payload = self::payload($lead, $template);
         if (is_wp_error($payload)) return self::reject($lead, $payload->get_error_code());
+        if ($mode === 'test') $payload = self::mark_test_payload($payload);
         if (!hash_equals($preview['fingerprint'], self::fingerprint($lead, $template, $payload))) return self::reject($lead, 'preview_changed');
         if (get_option('wkel_outreach_test_mode', '0') === '1' && ($mode !== 'test' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
         if ($mode === 'test' && (get_option('wkel_outreach_test_mode', '0') !== '1' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
@@ -306,6 +319,7 @@ class WKEL_Outreach {
                 case 'add':
                     $email = sanitize_email(wp_unslash($_POST['email'] ?? ''));
                     if (!is_email($email)) { $result = new WP_Error('email', 'Enter a valid email.'); break; }
+                    if (!self::is_test_recipient($email)) { $result = new WP_Error('test_recipient_not_allowed', 'Choose an email address from the saved test-recipient allowlist.'); break; }
                     $lead = WKEL_Submission::find_lead_by_email($email);
                     if (!$lead) $lead = WKEL_Submission::create_lead(['wkel_email' => $email,
                         'wkel_name' => sanitize_text_field(wp_unslash($_POST['name'] ?? '')),
@@ -343,7 +357,7 @@ class WKEL_Outreach {
         $live_leads = array_values(array_filter($leads, fn($item) => get_post_meta($item->ID, '_wkel_campaign', true) !== '' && !in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
         $eligible_leads = $tab === 'test' ? $test_leads : ($tab === 'live' ? $live_leads : []);
         if ($lead && !in_array($lead, array_map(static fn($item) => (int) $item->ID, $eligible_leads), true)) $lead = 0;
-        echo '<style>.wkel-outreach .wkel-outreach-card{margin:18px 0;padding:20px;background:#fff;border:1px solid #dcdcde;border-radius:6px}.wkel-outreach-card h2{margin-top:0}.wkel-outreach-card label{display:inline-block;margin:6px 10px 6px 0}.wkel-outreach-card select{min-width:min(420px,100%)}.wkel-send-confirm{margin-top:20px;padding:18px;border:2px solid #72aee6;border-radius:6px;background:#f6f9fc}.wkel-send-confirm h3{margin-top:0}</style>';
+        echo '<style>.wkel-outreach .wkel-outreach-card{margin:18px 0;padding:20px;background:#fff;border:1px solid #dcdcde;border-radius:6px}.wkel-outreach-card h2{margin-top:0}.wkel-outreach-card label{display:inline-block;margin:6px 10px 6px 0}.wkel-outreach-card select{min-width:min(420px,100%)}.wkel-template-editor label{display:block;width:100%}.wkel-template-editor input[name="template_name"],.wkel-template-editor input[name="subject"],.wkel-template-editor textarea[name="html"]{display:block;width:100%;max-width:100%;box-sizing:border-box}.wkel-template-editor textarea[name="html"]{min-height:360px}.wkel-send-confirm{margin-top:20px;padding:18px;border:2px solid #72aee6;border-radius:6px;background:#f6f9fc}.wkel-send-confirm h3{margin-top:0}</style>';
         echo '<div class="wrap wkel-outreach"><h1>Outreach</h1><p class="description">Choose a task below. Previewing never sends; delivery happens only after the explicit confirmation button.</p>';
         echo '<nav class="nav-tab-wrapper" aria-label="Outreach tasks">';
         foreach (['test' => 'Test emails', 'live' => 'Live send', 'templates' => 'Email templates'] as $key => $label) {
@@ -352,15 +366,18 @@ class WKEL_Outreach {
         echo '</nav>';
         if ($result !== null) echo '<div class="notice ' . (is_wp_error($result) ? 'notice-error' : 'notice-success') . '"><p>' . esc_html(is_wp_error($result) ? $result->get_error_message() : (string) $result) . '</p></div>';
         if ($tab === 'test') {
-            echo '<section class="wkel-outreach-card"><h2>1. Allow test recipients</h2><p>Test sends go only to the addresses listed here. Saving this list does not send an email or unlock live campaign delivery.</p>';
+            echo '<section class="wkel-outreach-card"><h2>1. Allow test recipients</h2><p>These settings control separate things. Only exact addresses on the saved allowlist can receive test emails. Live campaign delivery also has a separate server-side safety lock; these checkboxes do not open it.</p>';
             echo '<form method="post">'; wp_nonce_field('wkel_outreach'); echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="settings">';
-            echo '<p><label><input type="checkbox" name="enabled" value="1" ' . checked(get_option('wkel_outreach_enabled'), '1', false) . '> Enable Outreach</label> <label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal campaign sends</label></p>';
-            echo '<p><label><input type="checkbox" name="test_mode" value="1" ' . checked(get_option('wkel_outreach_test_mode', '0'), '1', false) . '> Enable allowlisted test sending</label></p>';
+            echo '<p><label><input type="checkbox" name="enabled" value="1" ' . checked(get_option('wkel_outreach_enabled'), '1', false) . '> Enable Outreach</label><br><span class="description">Master switch: off blocks every send; on alone does not unlock live sending.</span></p>';
+            echo '<p><label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal campaign sends</label><br><span class="description">On: live campaign sends are simulated and not delivered. Off removes this one barrier only; the server lock and other checks still apply. Test emails are not blocked by this setting.</span></p>';
+            echo '<p><label><input type="checkbox" name="test_mode" value="1" ' . checked(get_option('wkel_outreach_test_mode', '0'), '1', false) . '> Enable allowlisted test sending</label><br><span class="description">On: real test sends are allowed only to the saved addresses below, and live campaign sends are blocked. Off: no test sends.</span></p>';
             echo '<label for="wkel-test-recipients"><strong>Test recipient email addresses (one per line)</strong></label><textarea id="wkel-test-recipients" name="test_recipients" rows="4" class="large-text" placeholder="reviewer@example.com">' . esc_textarea((string) get_option('wkel_outreach_test_recipients', '')) . '</textarea>';
             submit_button('Save test settings', 'secondary', 'submit', false); echo '</form>';
-            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> A real test email can go only to an exact address above. Live campaign sends remain governed by the server lock.</p></div>';
+            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject and inside the message. Live campaign sends remain blocked by test mode and the separate server lock.</p></div>';
             echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This stages a contact only. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
-            echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <input name="email" type="email" placeholder="Allowlisted email" required></label></p><p><label for="wkel-test-personalisation">Optional personalisation note</label><textarea id="wkel-test-personalisation" name="personalisation_note" rows="3" class="large-text" placeholder="One short, contact-specific opening sentence"></textarea></p>';
+            echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
+            foreach (self::test_recipients() as $address) echo '<option value="' . esc_attr($address) . '">' . esc_html($address) . '</option>';
+            echo '</select></label></p><p><label for="wkel-test-personalisation">Optional personalisation note</label><textarea id="wkel-test-personalisation" name="personalisation_note" rows="3" class="large-text" placeholder="One short, contact-specific opening sentence"></textarea></p>';
             submit_button('Add test contact', 'secondary', 'submit', false); echo '</form></section>';
             echo '<section class="wkel-outreach-card"><h2>3. Preview and send the test</h2>';
             if (!$test_leads) echo '<p>No staged test contact matches the allowlist on this page yet. Add a test contact above using an exact allowlisted email address.</p>';
