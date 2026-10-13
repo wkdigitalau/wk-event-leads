@@ -207,6 +207,8 @@ class WKEL_Outreach {
     private static function persist_tracking_links(int $lead_id, int $message_id, array $links): bool {
         foreach ($links as $link) {
             if (!WKEL_Outreach_Store::add_click_link(hash('sha256', $link['token']), $lead_id, $message_id, $link['target_url'], $link['campaign'], $link['link_index'])) {
+                global $wpdb;
+                $wpdb->delete(WKEL_Outreach_Store::table('clicks'), ['message_id' => $message_id]);
                 return false;
             }
         }
@@ -380,7 +382,7 @@ class WKEL_Outreach {
         if ($code < 200 || $code >= 300 || !$resend) {
             $error = $code ? 'http_' . $code : 'transport_uncertain';
             $wpdb->update(WKEL_Outreach_Store::table('messages'), ['status' => 'failed', 'delivery' => $code ? 'rejected' : 'uncertain', 'outcome_at' => time()], ['id' => $id]);
-            if ($tracked_links) $wpdb->delete(WKEL_Outreach_Store::table('clicks'), ['message_id' => $id]);
+            // Keep link mappings for uncertain provider outcomes: the provider may have accepted the message before the connection failed.
             update_post_meta($lead, '_wkel_outreach_status', 'failed');
             update_post_meta($lead, '_wkel_email_status', 'failed');
             WKEL_Outreach_Store::suppress($payload['to'][0], 'failed', 'send_failure');
