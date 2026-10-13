@@ -259,10 +259,12 @@ class WKEL_Outreach {
         $path = (string) $request->get_param('path');
         $path = wp_parse_url($path, PHP_URL_PATH);
         if (!is_string($path) || $path === '' || $path[0] !== '/' || strlen($path) > 240) $path = '/';
+        $category = sanitize_key((string) $request->get_param('category'));
+        if ($event === 'cta' && !preg_match('/^[a-z0-9_-]{1,40}$/', $category)) return new WP_REST_Response(['success' => false], 400);
         $label = $event === 'cta' ? 'A tracked campaign CTA was activated.' : 'A campaign-attributed page view was recorded.';
         WKEL_Outreach_Store::audit((int) $row['lead_id'], (int) $row['message_id'], 'outreach_' . $event, 'path_only');
         WKEL_Submission::log_activity((int) $row['lead_id'], 'outreach_' . $event, $label,
-            '', time(), ['message_id' => (int) $row['message_id'], 'path' => sanitize_text_field($path)]);
+            '', time(), ['message_id' => (int) $row['message_id'], 'path' => sanitize_text_field($path), 'category' => $event === 'cta' ? $category : '']);
         return new WP_REST_Response(['success' => true], 202);
     }
 
