@@ -152,6 +152,6 @@ class WKEL_Outreach_Store {
 
     public static function messages(int $lead_id): array {
         global $wpdb;
-        return $wpdb->get_results($wpdb->prepare('SELECT id,mode,status,delivery,resend_id,created_at,sent_at,outcome_at FROM ' . self::table('messages') . ' WHERE lead_id = %d ORDER BY id DESC LIMIT 50', $lead_id), ARRAY_A) ?: [];
+        return $wpdb->get_results($wpdb->prepare('SELECT id,mode,status,delivery,resend_id,created_at,sent_at,outcome_at, (SELECT COALESCE(SUM(c.click_count),0) FROM ' . self::table('clicks') . ' c WHERE c.message_id = ' . self::table('messages') . '.id) AS link_requests FROM ' . self::table('messages') . ' WHERE lead_id = %d ORDER BY id DESC LIMIT 50', $lead_id), ARRAY_A) ?: [];
     }
 }
