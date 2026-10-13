@@ -36,6 +36,7 @@ jobs:
         run: |
           find . -name '*.php' -not -path './.git/*' -print0 | xargs -0 -n1 php -l
           node --check assets/js/kanban.js
+          node --check assets/js/tracking.js
           git diff --check
       - name: Install isolated WordPress and block delivery
         env:
