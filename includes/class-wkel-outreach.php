@@ -580,8 +580,8 @@ class WKEL_Outreach {
             echo '</form></div>';
         }
         if ($lead && get_post_type($lead) === 'wkel_lead') {
-            echo '<h3>Previous sends for this contact</h3><table class="widefat striped"><thead><tr><th>Message</th><th>Status / delivery</th><th>Sent / outcome</th></tr></thead><tbody>';
-            foreach (WKEL_Outreach_Store::messages($lead) as $row) echo '<tr><td>' . esc_html($row['id'] . ' / ' . $row['mode']) . '</td><td>' . esc_html($row['status'] . ' / ' . $row['delivery']) . '</td><td>' . esc_html(wp_date('Y-m-d H:i:s', $row['created_at']) . ($row['outcome_at'] ? ' / ' . wp_date('Y-m-d H:i:s', $row['outcome_at']) : '')) . '</td></tr>';
+            echo '<h3>Previous sends for this contact</h3><table class="widefat striped"><thead><tr><th>Message</th><th>Status / delivery</th><th>Link requests*</th><th>Sent / outcome</th></tr></thead><tbody>';
+            foreach (WKEL_Outreach_Store::messages($lead) as $row) echo '<tr><td>' . esc_html($row['id'] . ' / ' . $row['mode']) . '</td><td>' . esc_html($row['status'] . ' / ' . $row['delivery']) . '</td><td>' . esc_html((string) ($row['link_requests'] ?? 0)) . '</td><td>' . esc_html(wp_date('Y-m-d H:i:s', $row['created_at']) . ($row['outcome_at'] ? ' / ' . wp_date('Y-m-d H:i:s', $row['outcome_at']) : '')) . '</td></tr>';
             echo '</tbody></table><p>Each follow-up uses this same contact and is recorded here. Replies and next actions are tracked in the Pipeline.</p>';
         }
     }
