@@ -16,7 +16,7 @@ class WKEL_Outreach {
     }
 
     /**
-     * Move historical unsent campaign imports and test-only contacts out of the live Pipeline.
+     * Move historical test-only contacts out of the live Pipeline.
      * Published real leads with a recorded live send remain untouched.
      */
     private static function migrate_pipeline_staging(): void {
@@ -27,10 +27,7 @@ class WKEL_Outreach {
             'post_status' => 'publish',
             'posts_per_page' => -1,
             'fields' => 'ids',
-            'meta_query' => ['relation' => 'OR',
-                ['key' => '_wkel_outreach_enrolled', 'value' => '1'],
-                ['key' => '_wkel_campaign', 'compare' => 'EXISTS'],
-            ],
+            'meta_query' => [['key' => '_wkel_outreach_enrolled', 'value' => '1']],
         ]);
         $complete = true;
         foreach ($ids as $id) {
