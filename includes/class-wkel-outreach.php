@@ -377,7 +377,7 @@ class WKEL_Outreach {
             echo '<p><label><input type="checkbox" name="test_mode" value="1" ' . checked(get_option('wkel_outreach_test_mode', '0'), '1', false) . '> Enable allowlisted test sending</label><br><span class="description">On: real test sends are allowed only to the saved addresses below, and live campaign sends are blocked. Off: no test sends.</span></p>';
             echo '<label for="wkel-test-recipients"><strong>Test recipient email addresses (one per line)</strong></label><textarea id="wkel-test-recipients" name="test_recipients" rows="4" class="large-text" placeholder="reviewer@example.com">' . esc_textarea((string) get_option('wkel_outreach_test_recipients', '')) . '</textarea>';
             submit_button('Save test settings', 'secondary', 'submit', false); echo '</form>';
-            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject and inside the message. Live campaign sends remain blocked by test mode and the separate server lock.</p></div>';
+            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked by test mode and the separate server lock.</p></div>';
             echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This stages a contact only. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
             echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
             foreach (self::test_recipients() as $address) echo '<option value="' . esc_attr($address) . '">' . esc_html($address) . '</option>';
@@ -416,7 +416,11 @@ class WKEL_Outreach {
     private static function render_send_panel(array $leads, array $templates, int $lead, int $template, ?array $preview, string $tab): void {
         echo '<form method="post">'; wp_nonce_field('wkel_outreach'); echo '<input type="hidden" name="tab" value="' . esc_attr($tab) . '"><input type="hidden" name="wkel_outreach_action" value="preview">';
         echo '<p><label for="wkel-lead-select">Contact</label><select id="wkel-lead-select" name="lead_id" required><option value="">Choose a contact…</option>';
-        foreach ($leads as $item) echo '<option value="' . esc_attr($item->ID) . '" ' . selected($lead, $item->ID, false) . '>' . esc_html(get_post_meta($item->ID, '_wkel_name', true) . ' — ' . WKEL_Email::get_lead_email($item->ID) . ' [' . (get_post_meta($item->ID, '_wkel_outreach_status', true) ?: 'draft') . ']') . '</option>';
+        foreach ($leads as $item) {
+            $contact_vars = WKEL_Email::build_template_vars((int) $item->ID);
+            $contact_name = sanitize_text_field((string) ($contact_vars['full_name'] ?? ''));
+            echo '<option value="' . esc_attr($item->ID) . '" ' . selected($lead, $item->ID, false) . '>' . esc_html(($contact_name ?: 'Unnamed contact') . ' — ' . WKEL_Email::get_lead_email($item->ID) . ' [' . (get_post_meta($item->ID, '_wkel_outreach_status', true) ?: 'draft') . ']') . '</option>';
+        }
         echo '</select></p><p><label for="wkel-approved-template">Email template</label><select id="wkel-approved-template" name="template_id" required><option value="">Choose an approved template…</option>';
         foreach ($templates as $item) if (get_post_meta($item->ID, '_wkel_approved', true) === '1') echo '<option value="' . esc_attr($item->ID) . '" ' . selected($template, $item->ID, false) . '>' . esc_html($item->post_title) . '</option>';
         echo '</select> '; submit_button('Preview email', 'secondary', 'submit', false); echo '</p></form>';
