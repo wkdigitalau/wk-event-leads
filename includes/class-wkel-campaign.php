@@ -464,7 +464,7 @@ class WKEL_Campaign {
         <body <?php body_class('wkel-unsubscribe-page'); ?>>
             <main style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f7f8;padding:32px 16px;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
                 <section style="width:100%;max-width:560px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:32px;box-shadow:0 18px 45px rgba(7,21,26,.08);">
-                    <p style="margin:0 0 10px;color:#1E6FBF;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;"><?php echo esc_html(get_bloginfo('name')); ?></p>
+                    <p style="margin:0 0 10px;color:#1E6FBF;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;"><?php esc_html_e('Elite Nurse Partners', 'wk-event-leads'); ?></p>
                     <h1 style="margin:0 0 16px;color:#07151a;font-size:30px;line-height:1.15;"><?php esc_html_e('Marketing opt-out', 'wk-event-leads'); ?></h1>
                     <p style="margin:0 0 22px;color:#4b5563;line-height:1.6;"><?php esc_html_e('Enter your email address and we will suppress it from future marketing campaigns.', 'wk-event-leads'); ?></p>
 
