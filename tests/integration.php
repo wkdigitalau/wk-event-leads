@@ -137,7 +137,7 @@ $click_token = $click_match[1] ?? '';
 $click_request = new WP_REST_Request('GET'); $click_request['token'] = $click_token;
 $click_response = WKEL_Outreach::handle_tracked_click($click_request);
 $click_row = WKEL_Outreach_Store::click_link(hash('sha256', $click_token));
-check($click_response->get_status() === 302 && str_contains($click_response->get_headers()['Location'], 'utm_campaign=qa-first-cohort') && !str_contains($click_response->get_headers()['Location'], 'example.invalid'), 'tracked link redirects only to the configured ENP site with campaign UTMs');
+check($click_response->get_status() === 302 && str_contains($click_response->get_headers()['Location'], 'utm_campaign=enp-cold-outreach') && !str_contains($click_response->get_headers()['Location'], 'example.invalid'), 'tracked link redirects only to the configured ENP site with campaign UTMs');
 check((int) $click_row['click_count'] === 1 && (int) $click_row['lead_id'] === $l && (int) $click_row['message_id'] === (int) $row['id'], 'link request joins back to the exact lead and message');
 $activity_request = new WP_REST_Request('POST'); $activity_request->set_param('wkel_ref', $click_token); $activity_request->set_param('event', 'page_view'); $activity_request->set_param('path', '/services/?email=private@example.invalid');
 $activity_request->set_header('Origin', 'https://elitenursepartners.com.au');
