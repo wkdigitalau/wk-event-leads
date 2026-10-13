@@ -131,10 +131,6 @@ class WKEL_Outreach {
         if (empty($payload['subject']) || !preg_match('/^\[TEST\]/i', $payload['subject'])) {
             $payload['subject'] = '[TEST] ' . ($payload['subject'] ?? '');
         }
-        if (!str_contains((string) ($payload['html'] ?? ''), 'data-wkel-test-copy')) {
-            $banner = '<div data-wkel-test-copy="1" style="margin:0 0 20px;padding:12px 16px;border:1px solid #d97706;border-left:5px solid #d97706;background:#fff7ed;color:#7c2d12;font:600 14px/1.5 Arial,sans-serif;">TEST EMAIL — Internal review copy only. This is not live campaign outreach.</div>';
-            $payload['html'] = $banner . ($payload['html'] ?? '');
-        }
         return $payload;
     }
 
@@ -278,6 +274,11 @@ class WKEL_Outreach {
         return 'Email accepted by Resend. Delivery outcome will appear in the history.';
     }
 
+    private static function update_test_contact_identity(int $lead_id, string $name, string $organisation): void {
+        if ($name !== '') update_post_meta($lead_id, '_wkel_wkel_name', WKEL_Encryption::encrypt($name));
+        if ($organisation !== '') update_post_meta($lead_id, '_wkel_wkel_organisation', $organisation);
+    }
+
     public static function render(): void {
         if (!current_user_can('manage_options')) wp_die('Forbidden.');
         $result = null;
@@ -320,11 +321,14 @@ class WKEL_Outreach {
                     $email = sanitize_email(wp_unslash($_POST['email'] ?? ''));
                     if (!is_email($email)) { $result = new WP_Error('email', 'Enter a valid email.'); break; }
                     if (!self::is_test_recipient($email)) { $result = new WP_Error('test_recipient_not_allowed', 'Choose an email address from the saved test-recipient allowlist.'); break; }
+                    $name = sanitize_text_field(wp_unslash($_POST['name'] ?? ''));
+                    $organisation = sanitize_text_field(wp_unslash($_POST['organisation'] ?? ''));
                     $lead = WKEL_Submission::find_lead_by_email($email);
                     if (!$lead) $lead = WKEL_Submission::create_lead(['wkel_email' => $email,
-                        'wkel_name' => sanitize_text_field(wp_unslash($_POST['name'] ?? '')),
-                        'wkel_organisation' => sanitize_text_field(wp_unslash($_POST['organisation'] ?? ''))], 'outreach', '', 'outreach', 'other');
+                        'wkel_name' => $name,
+                        'wkel_organisation' => $organisation], 'outreach', '', 'outreach', 'other');
                     if (is_wp_error($lead)) { $result = $lead; $lead = 0; break; }
+                    self::update_test_contact_identity($lead, $name, $organisation);
                     update_post_meta($lead, '_wkel_outreach_enrolled', '1');
                     update_post_meta($lead, '_wkel_personalisation_note', sanitize_textarea_field(wp_unslash($_POST['personalisation_note'] ?? '')));
                     $result = 'Lead staged. No email sent.';
