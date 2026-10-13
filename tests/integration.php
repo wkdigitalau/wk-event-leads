@@ -217,7 +217,7 @@ ob_start(); WKEL_Insights::render(); $ui = ob_get_clean();
 check(!str_contains($ui, '356866720') && !str_contains($ui, 'wkdigital.com.au') && str_contains($ui, 'Not configured'), 'Insights contains no static WK Digital properties');
 for ($n = 0; $n < 55; $n++) lead('page-' . $n);
 update_option('wkel_outreach_test_mode', '1');
-$_SERVER['REQUEST_METHOD'] = 'GET'; $picker_test = lead('picker'); $_GET = ['lead_id' => $picker_test]; $_POST = [];
+$_SERVER['REQUEST_METHOD'] = 'GET'; $picker_test = lead('picker'); $_GET = ['lead_id' => $picker_test, 'wkel_outreach_page' => 1]; $_POST = [];
 ob_start(); WKEL_Outreach::render(); $ui = ob_get_clean();
 check(str_contains($ui, 'Test emails') && str_contains($ui, 'Live send') && str_contains($ui, 'Email templates') && str_contains($ui, 'Next contacts'), 'Outreach separates test, live send and templates into task tabs');
 $_GET['wkel_outreach_page'] = 2; ob_start(); WKEL_Outreach::render(); $page2 = ob_get_clean();
