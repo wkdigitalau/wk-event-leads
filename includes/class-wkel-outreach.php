@@ -19,7 +19,7 @@ class WKEL_Outreach {
     }
 
     public static function migrate(): void {
-        if (get_option('wkel_outreach_schema') !== '1' || get_option('wkel_outreach_migrated') === '1') return;
+        if (!in_array((string) get_option('wkel_outreach_schema'), ['1', '2'], true) || get_option('wkel_outreach_migrated') === '1') return;
         // Legacy jobs are also blocked permanently at their callback.
         if (function_exists('as_unschedule_all_actions')) as_unschedule_all_actions('wkel_send_confirmation_email', [], 'wk-event-leads');
         global $wpdb;
@@ -153,7 +153,121 @@ class WKEL_Outreach {
         return hash('sha256', wp_json_encode([home_url(), get_current_blog_id(), $lead_id, $template_id,
             get_post_meta($template_id, '_wkel_revision', true), get_post_meta($lead_id), $payload, get_option('wkel_outreach_enabled'),
             get_option('wkel_outreach_dry_run'), get_option('wkel_outreach_test_mode', '0'), get_option('wkel_outreach_test_recipients', ''),
+            get_option('wkel_campaign_link_tracking', '0'),
             hash('sha256', (string) get_option('wkel_resend_key', ''))]));
+    }
+
+    public static function register_tracking_routes(): void {
+        register_rest_route('wk-event-leads/v1', '/outreach-click/(?P<token>[a-f0-9]{64})', [
+            'methods' => 'GET', 'callback' => [self::class, 'handle_tracked_click'],
+            'permission_callback' => '__return_true',
+        ]);
+        register_rest_route('wk-event-leads/v1', '/outreach-activity', [
+            'methods' => 'POST', 'callback' => [self::class, 'handle_site_activity'],
+            'permission_callback' => '__return_true',
+        ]);
+    }
+
+    private static function tracking_site_host(): string {
+        $site = esc_url_raw((string) get_option('wkel_enp_url', ''));
+        $scheme = strtolower((string) wp_parse_url($site, PHP_URL_SCHEME));
+        $host = strtolower((string) wp_parse_url($site, PHP_URL_HOST));
+        return $scheme === 'https' && $host ? $host : '';
+    }
+
+    private static function is_tracking_site_url(string $url): bool {
+        $host = strtolower((string) wp_parse_url($url, PHP_URL_HOST));
+        $expected = self::tracking_site_host();
+        if (!$expected || strtolower((string) wp_parse_url($url, PHP_URL_SCHEME)) !== 'https' || !$host) return false;
+        return $host === $expected || $host === 'www.' . $expected
+            || (str_starts_with($expected, 'www.') && $host === substr($expected, 4));
+    }
+
+    /** Return [payload, tracked-link descriptors], preserving recipient-specific links only for live campaign sends. */
+    private static function tracked_payload(int $lead_id, array $payload, string $authorization): array|WP_Error {
+        if (get_option('wkel_campaign_link_tracking', '0') !== '1') return [$payload, []];
+        if (!self::tracking_site_host()) return new WP_Error('tracking_site_url', 'Set the secure Elite Nurse Partners website URL before enabling campaign link tracking.');
+        $campaign = sanitize_key((string) get_post_meta($lead_id, '_wkel_campaign', true));
+        if (!$campaign) $campaign = 'outreach';
+        $links = [];
+        $index = 0;
+        $html = preg_replace_callback('/\bhref\s*=\s*(["\'])(.*?)\1/is', function ($match) use (&$links, &$index, $lead_id, $authorization, $campaign) {
+            $target = esc_url_raw(html_entity_decode($match[2], ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+            if (!$target || !self::is_tracking_site_url($target)) return $match[0];
+            $index++;
+            $token = hash_hmac('sha256', home_url() . '|' . get_current_blog_id() . '|' . $authorization . '|' . $index . '|' . $target, wp_salt('auth'));
+            $links[] = ['token' => $token, 'target_url' => $target, 'campaign' => $campaign, 'link_index' => $index];
+            $url = rest_url('wk-event-leads/v1/outreach-click/' . $token);
+            return 'href=' . $match[1] . esc_url($url) . $match[1];
+        }, (string) ($payload['html'] ?? ''));
+        $payload['html'] = is_string($html) ? $html : (string) ($payload['html'] ?? '');
+        return [$payload, $links];
+    }
+
+    private static function persist_tracking_links(int $lead_id, int $message_id, array $links): bool {
+        foreach ($links as $link) {
+            if (!WKEL_Outreach_Store::add_click_link(hash('sha256', $link['token']), $lead_id, $message_id, $link['target_url'], $link['campaign'], $link['link_index'])) {
+                global $wpdb;
+                $wpdb->delete(WKEL_Outreach_Store::table('clicks'), ['message_id' => $message_id]);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static function handle_tracked_click(WP_REST_Request $request): WP_REST_Response {
+        $token = sanitize_text_field((string) $request['token']);
+        $row = WKEL_Outreach_Store::click_link(hash('sha256', $token));
+        if (!$row || !self::is_tracking_site_url((string) $row['target_url'])) {
+            return new WP_REST_Response(['success' => false, 'message' => 'This campaign link is unavailable.'], 404);
+        }
+        $at = time();
+        if (!WKEL_Outreach_Store::record_click(hash('sha256', $token), $at)) {
+            return new WP_REST_Response(['success' => false], 503);
+        }
+        WKEL_Outreach_Store::audit((int) $row['lead_id'], (int) $row['message_id'], 'outreach_link_requested', 'scanner_or_human');
+        WKEL_Submission::log_activity((int) $row['lead_id'], 'outreach_link_requested',
+            'A recipient-specific campaign link was requested. Email security scanners may also trigger this event.',
+            '', $at, ['message_id' => (int) $row['message_id'], 'link_index' => (int) $row['link_index']]);
+        $destination = add_query_arg([
+            'utm_source' => 'enp_outreach', 'utm_medium' => 'email',
+            'utm_campaign' => 'enp-cold-outreach',
+            'utm_content' => 'link-' . absint($row['link_index']),
+            'wkel_ref' => $token,
+        ], (string) $row['target_url']);
+        $response = new WP_REST_Response(null, 302);
+        $response->header('Location', esc_url_raw($destination));
+        $response->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        $response->header('Referrer-Policy', 'no-referrer');
+        $response->header('X-Robots-Tag', 'noindex, nofollow');
+        return $response;
+    }
+
+    public static function handle_site_activity(WP_REST_Request $request): WP_REST_Response {
+        $origin = (string) $request->get_header('origin');
+        $origin_host = strtolower((string) wp_parse_url($origin, PHP_URL_HOST));
+        $origin_scheme = strtolower((string) wp_parse_url($origin, PHP_URL_SCHEME));
+        $expected = self::tracking_site_host();
+        if (!$expected || $origin_scheme !== 'https' || !($origin_host === $expected || $origin_host === 'www.' . $expected
+            || (str_starts_with($expected, 'www.') && $origin_host === substr($expected, 4)))) {
+            return new WP_REST_Response(['success' => false], 403);
+        }
+        $token = sanitize_text_field((string) $request->get_param('wkel_ref'));
+        if (!preg_match('/^[a-f0-9]{64}$/', $token)) return new WP_REST_Response(['success' => false], 400);
+        $row = WKEL_Outreach_Store::click_link(hash('sha256', $token));
+        if (!$row) return new WP_REST_Response(['success' => false], 404);
+        $event = sanitize_key((string) $request->get_param('event'));
+        if (!in_array($event, ['page_view', 'cta'], true)) return new WP_REST_Response(['success' => false], 400);
+        $path = (string) $request->get_param('path');
+        $path = wp_parse_url($path, PHP_URL_PATH);
+        if (!is_string($path) || $path === '' || $path[0] !== '/' || strlen($path) > 240) $path = '/';
+        $category = sanitize_key((string) $request->get_param('category'));
+        if ($event === 'cta' && !preg_match('/^[a-z0-9_-]{1,40}$/', $category)) return new WP_REST_Response(['success' => false], 400);
+        $label = $event === 'cta' ? 'A tracked campaign CTA was activated.' : 'A campaign-attributed page view was recorded.';
+        WKEL_Outreach_Store::audit((int) $row['lead_id'], (int) $row['message_id'], 'outreach_' . $event, 'path_only');
+        WKEL_Submission::log_activity((int) $row['lead_id'], 'outreach_' . $event, $label,
+            '', time(), ['message_id' => (int) $row['message_id'], 'path' => sanitize_text_field($path), 'category' => $event === 'cta' ? $category : '']);
+        return new WP_REST_Response(['success' => true], 202);
     }
 
     public static function preview(int $lead_id, int $template_id, string $mode = 'legacy'): array|WP_Error {
@@ -164,6 +278,12 @@ class WKEL_Outreach {
         if ($mode === 'live' && self::is_test_recipient($payload['to'][0])) return new WP_Error('test_contact_wrong_tab', 'This address is on the test allowlist. Use the Test emails tab.');
         if ($mode === 'test') $payload = self::mark_test_payload($payload);
         $token = wp_generate_uuid4();
+        $tracked_links = [];
+        if ($mode === 'live' || ($mode === 'test' && get_option('wkel_campaign_link_tracking', '0') === '1')) {
+            $tracked = self::tracked_payload($lead_id, $payload, $token);
+            if (is_wp_error($tracked)) return $tracked;
+            [$payload, $tracked_links] = $tracked;
+        }
         set_transient('wkel_preview_' . $token, ['user' => get_current_user_id(), 'lead' => $lead_id, 'template' => $template_id, 'mode' => $mode,
             'fingerprint' => self::fingerprint($lead_id, $template_id, $payload)], 900);
         return ['token' => $token, 'payload' => $payload];
@@ -181,6 +301,12 @@ class WKEL_Outreach {
         $payload = self::payload($lead, $template);
         if (is_wp_error($payload)) return self::reject($lead, $payload->get_error_code());
         if ($mode === 'test') $payload = self::mark_test_payload($payload);
+        $tracked_links = [];
+        if ($mode === 'live' || ($mode === 'test' && get_option('wkel_campaign_link_tracking', '0') === '1')) {
+            $tracked = self::tracked_payload($lead, $payload, $token);
+            if (is_wp_error($tracked)) return self::reject($lead, $tracked->get_error_code());
+            [$payload, $tracked_links] = $tracked;
+        }
         if (!hash_equals($preview['fingerprint'], self::fingerprint($lead, $template, $payload))) return self::reject($lead, 'preview_changed');
         if (get_option('wkel_outreach_test_mode', '0') === '1' && ($mode !== 'test' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
         if ($mode === 'test' && (get_option('wkel_outreach_test_mode', '0') !== '1' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
@@ -191,7 +317,7 @@ class WKEL_Outreach {
         $lock = 'wkel_send_lock_' . $lead;
         if (!add_option($lock, time(), '', false)) return self::reject($lead, 'send_locked');
         try {
-            return self::dispatch($lead, $template, $token, $payload, $mode);
+            return self::dispatch($lead, $template, $token, $payload, $mode, $tracked_links);
         } finally {
             delete_option($lock);
         }
@@ -203,12 +329,12 @@ class WKEL_Outreach {
         return new WP_Error($code, 'Send blocked: ' . sanitize_key($code) . '.');
     }
 
-    private static function dispatch(int $lead, int $template, string $token, array $payload, string $mode): string|WP_Error {
+    private static function dispatch(int $lead, int $template, string $token, array $payload, string $mode, array $tracked_links = []): string|WP_Error {
         global $wpdb;
         $test_send = ($mode === 'test' || $mode === 'legacy') && get_option('wkel_outreach_test_mode', '0') === '1' && self::is_test_recipient($payload['to'][0]);
-        $live_delivery = get_option('wkel_outreach_dry_run', '1') === '0';
-        // The explicit test mode bypasses dry-run only for exact allowlisted recipients.
-        $dry = !$test_send && !$live_delivery;
+        $server_live = get_option('wkel_outreach_test_mode', '0') !== '1' && get_option('wkel_outreach_dry_run', '1') === '0';
+        // The explicit test mode bypasses the server lock and dry-run only for exact allowlisted recipients.
+        $dry = !$test_send && !$server_live;
         $delivery_mode = $test_send ? 'test' : ($dry ? 'dry_run' : 'live');
         $key = WKEL_Encryption::decrypt((string) get_option('wkel_resend_key', ''));
         if (!$dry && (!$key || WKEL_Encryption::is_encrypted($key))) return self::reject($lead, 'resend_not_configured');
@@ -239,6 +365,11 @@ class WKEL_Outreach {
             $wpdb->update(WKEL_Outreach_Store::table('messages'), ['status' => 'suppressed', 'outcome_at' => time()], ['id' => $id]);
             return self::reject($lead, $blocked);
         }
+        if (in_array($mode, ['live', 'test'], true) && $tracked_links && !self::persist_tracking_links($lead, $id, $tracked_links)) {
+            $wpdb->update(WKEL_Outreach_Store::table('messages'), ['status' => 'failed', 'outcome_at' => time()], ['id' => $id]);
+            WKEL_Outreach_Store::audit($lead, $id, 'tracking_storage_failed');
+            return new WP_Error('tracking_storage_failed', 'Tracking could not be recorded, so no email was sent.');
+        }
         update_post_meta($lead, '_wkel_outreach_status', 'queued');
         update_post_meta($lead, '_wkel_email_status', 'queued');
         $response = wp_remote_post('https://api.resend.com/emails', ['headers' => [
@@ -251,6 +382,7 @@ class WKEL_Outreach {
         if ($code < 200 || $code >= 300 || !$resend) {
             $error = $code ? 'http_' . $code : 'transport_uncertain';
             $wpdb->update(WKEL_Outreach_Store::table('messages'), ['status' => 'failed', 'delivery' => $code ? 'rejected' : 'uncertain', 'outcome_at' => time()], ['id' => $id]);
+            // Keep link mappings for uncertain provider outcomes: the provider may have accepted the message before the connection failed.
             update_post_meta($lead, '_wkel_outreach_status', 'failed');
             update_post_meta($lead, '_wkel_email_status', 'failed');
             WKEL_Outreach_Store::suppress($payload['to'][0], 'failed', 'send_failure');
@@ -315,6 +447,7 @@ class WKEL_Outreach {
                     update_option('wkel_outreach_dry_run', !empty($_POST['dry_run']) ? '1' : '0');
                     update_option('wkel_outreach_test_mode', !empty($_POST['test_mode']) ? '1' : '0');
                     update_option('wkel_outreach_test_recipients', implode("\n", array_values($recipients)));
+                    update_option('wkel_campaign_link_tracking', !empty($_POST['campaign_link_tracking']) ? '1' : '0');
                     $result = 'Outreach settings saved.';
                     break;
                 case 'add':
@@ -356,7 +489,6 @@ class WKEL_Outreach {
             && get_option('wkel_outreach_migrated') === '1'
             && get_option('wkel_outreach_test_mode', '0') !== '1'
             && get_option('wkel_outreach_dry_run', '1') === '0';
-
         $test_leads = array_values(array_filter($leads, fn($item) => in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
         $live_leads = array_values(array_filter($leads, fn($item) => get_post_meta($item->ID, '_wkel_campaign', true) !== '' && !in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
         $eligible_leads = $tab === 'test' ? $test_leads : ($tab === 'live' ? $live_leads : []);
@@ -370,14 +502,15 @@ class WKEL_Outreach {
         echo '</nav>';
         if ($result !== null) echo '<div class="notice ' . (is_wp_error($result) ? 'notice-error' : 'notice-success') . '"><p>' . esc_html(is_wp_error($result) ? $result->get_error_message() : (string) $result) . '</p></div>';
         if ($tab === 'test') {
-            echo '<section class="wkel-outreach-card"><h2>1. Allow test recipients</h2><p>Only exact addresses on the saved allowlist can receive test emails. Dry run blocks live campaign delivery; test sending is separate.</p>';
+            echo '<section class="wkel-outreach-card"><h2>1. Allow test recipients</h2><p>These settings control separate things. Only exact addresses on the saved allowlist can receive test emails. Live delivery is blocked while test mode or dry run is on.</p>';
             echo '<form method="post">'; wp_nonce_field('wkel_outreach'); echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="settings">';
             echo '<p><label><input type="checkbox" name="enabled" value="1" ' . checked(get_option('wkel_outreach_enabled'), '1', false) . '> Enable Outreach</label><br><span class="description">Master switch: off blocks every send; on alone does not unlock live sending.</span></p>';
-            echo '<p><label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal campaign sends</label><br><span class="description">On: live campaign sends are simulated and not delivered. Off allows live delivery only when Outreach is enabled, test mode is off, and all other safeguards pass. Test emails are not blocked by this setting.</span></p>';
+            echo '<p><label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal campaign sends</label><br><span class="description">On: live campaign sends are simulated and not delivered. Off allows live delivery only when Outreach is enabled, test mode is off, and all other checks pass. Test emails are not blocked by this setting.</span></p>';
             echo '<p><label><input type="checkbox" name="test_mode" value="1" ' . checked(get_option('wkel_outreach_test_mode', '0'), '1', false) . '> Enable allowlisted test sending</label><br><span class="description">On: real test sends are allowed only to the saved addresses below, and live campaign sends are blocked. Off: no test sends.</span></p>';
             echo '<label for="wkel-test-recipients"><strong>Test recipient email addresses (one per line)</strong></label><textarea id="wkel-test-recipients" name="test_recipients" rows="4" class="large-text" placeholder="reviewer@example.com">' . esc_textarea((string) get_option('wkel_outreach_test_recipients', '')) . '</textarea>';
+            echo '<p><label><input type="checkbox" name="campaign_link_tracking" value="1" ' . checked(get_option('wkel_campaign_link_tracking', '0'), '1', false) . '> Enable first-party campaign link tracking</label><br><span class="description">When enabled, live sends and allowlisted test sends use recipient-specific links; link requests and site activity are recorded in Connect. Enable only after the site script and privacy notice are live.</span></p>';
             submit_button('Save test settings', 'secondary', 'submit', false); echo '</form>';
-            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked while test mode or dry run is on.</p></div>';
+            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked by test mode and dry run.</p></div>';
             echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This stages a contact only. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
             echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
             foreach (self::test_recipients() as $address) echo '<option value="' . esc_attr($address) . '">' . esc_html($address) . '</option>';
@@ -391,7 +524,7 @@ class WKEL_Outreach {
             echo '</section>';
         } elseif ($tab === 'live') {
             echo '<section class="wkel-outreach-card"><h2>Campaign readiness</h2>';
-            if (!$live_send_ready) echo '<div class="notice notice-warning inline"><p><strong>Live sending is not ready.</strong> You can import contacts and preview emails here, but delivery stays blocked until Outreach is enabled, migration is complete, test mode and dry run are off.</p></div>';
+            if (!$live_send_ready) echo '<div class="notice notice-warning inline"><p><strong>Live sending is not ready.</strong> You can import contacts and preview emails here, but delivery stays blocked until Outreach is enabled, migration is complete, test mode is off and dry run is off.</p></div>';
             else echo '<p>Live sending is enabled. Each email is still sent individually, only after preview and confirmation.</p>';
             echo '</section><section class="wkel-outreach-card"><h2>1. Import campaign contacts</h2><p>Upload the approved campaign CSV. Importing does not send email.</p>';
             WKEL_Campaign::render_admin_page(); echo '</section>';
@@ -431,7 +564,6 @@ class WKEL_Outreach {
                 && get_option('wkel_outreach_migrated') === '1'
                 && get_option('wkel_outreach_test_mode', '0') !== '1'
                 && get_option('wkel_outreach_dry_run', '1') === '0';
-
             echo '<div class="wkel-send-confirm"><h3>Review before sending</h3><p><strong>To:</strong> ' . esc_html($recipient) . '<br><strong>From:</strong> ' . esc_html($preview['payload']['from']) . '<br><strong>Subject:</strong> ' . esc_html($preview['payload']['subject']) . '</p>';
             echo '<iframe title="Formatted email preview" sandbox="" referrerpolicy="no-referrer" style="width:100%;height:420px;background:white;border:1px solid #ccc" srcdoc="' . esc_attr('<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><meta charset="utf-8">' . $preview['payload']['html']) . '"></iframe>';
             echo '<form method="post" onsubmit="return confirm(' . esc_attr(wp_json_encode($test_preview ? 'Send this test email to ' . $recipient . '?' : 'Send this email to ' . $recipient . '?') . ';') . '">'; wp_nonce_field('wkel_outreach');
@@ -441,15 +573,15 @@ class WKEL_Outreach {
                 submit_button('Confirm and send test email', 'primary', 'submit', false);
             } else {
                 echo '<p><strong>CAMPAIGN EMAIL — check the recipient and content carefully.</strong></p>';
-                if (!$live_ready) echo '<p class="notice notice-warning inline"><strong>Not sent:</strong> live delivery is blocked while test mode or dry run is active.</p>';
+                if (!$live_ready) echo '<p class="notice notice-warning inline"><strong>Not sent:</strong> test mode or dry run is active.</p>';
                 if ($live_ready) submit_button('Confirm and send this email', 'primary', 'submit', false);
-                else echo '<button type="button" class="button button-primary" disabled aria-disabled="true">Live sending is locked</button>';
+                else echo '<button type="button" class="button button-primary" disabled aria-disabled="true">Turn off test mode and dry run</button>';
             }
             echo '</form></div>';
         }
         if ($lead && get_post_type($lead) === 'wkel_lead') {
-            echo '<h3>Previous sends for this contact</h3><table class="widefat striped"><thead><tr><th>Message</th><th>Status / delivery</th><th>Sent / outcome</th></tr></thead><tbody>';
-            foreach (WKEL_Outreach_Store::messages($lead) as $row) echo '<tr><td>' . esc_html($row['id'] . ' / ' . $row['mode']) . '</td><td>' . esc_html($row['status'] . ' / ' . $row['delivery']) . '</td><td>' . esc_html(wp_date('Y-m-d H:i:s', $row['created_at']) . ($row['outcome_at'] ? ' / ' . wp_date('Y-m-d H:i:s', $row['outcome_at']) : '')) . '</td></tr>';
+            echo '<h3>Previous sends for this contact</h3><table class="widefat striped"><thead><tr><th>Message</th><th>Status / delivery</th><th>Link requests*</th><th>Sent / outcome</th></tr></thead><tbody>';
+            foreach (WKEL_Outreach_Store::messages($lead) as $row) echo '<tr><td>' . esc_html($row['id'] . ' / ' . $row['mode']) . '</td><td>' . esc_html($row['status'] . ' / ' . $row['delivery']) . '</td><td>' . esc_html((string) ($row['link_requests'] ?? 0)) . '</td><td>' . esc_html(wp_date('Y-m-d H:i:s', $row['created_at']) . ($row['outcome_at'] ? ' / ' . wp_date('Y-m-d H:i:s', $row['outcome_at']) : '')) . '</td></tr>';
             echo '</tbody></table><p>Each follow-up uses this same contact and is recorded here. Replies and next actions are tracked in the Pipeline.</p>';
         }
     }
