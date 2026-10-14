@@ -121,9 +121,29 @@ check(WKEL_Outreach_Store::blocked($l, 'csv@example.invalid') === 'unsubscribed'
 check(count($GLOBALS['wkel_http_calls']) === 0, 'all save/import/preview/suppression cases make zero delivery requests');
 // Simulated live branch: the MU guard intercepts every HTTP call; no network is used.
 update_option('wkel_outreach_dry_run', '0');
-$l = lead('accepted'); $token = preview($l, $t); $result = WKEL_Outreach::send($token);
+update_option('wkel_enp_url', 'https://elitenursepartners.com.au');
+update_option('wkel_campaign_link_tracking', '1');
+$tracking_template = WKEL_Outreach::save_template(0, 'Tracked links QA', 'Hello {{first_name}}', '<p>Review ENP: <a href="https://elitenursepartners.com.au/services/">Services</a></p><a href="{{unsubscribe_url}}">Unsubscribe</a>');
+check(is_int($tracking_template) && WKEL_Outreach::approve($tracking_template) === true, 'tracking template approved');
+$l = lead('accepted'); update_post_meta($l, '_wkel_campaign', 'qa-first-cohort');
+$live_preview = WKEL_Outreach::preview($l, $tracking_template, 'live');
+check(!is_wp_error($live_preview) && preg_match('#/outreach-click/[a-f0-9]{64}#', $live_preview['payload']['html']) === 1, 'live preview uses an opaque first-party link');
+check(!str_contains($live_preview['payload']['html'], 'wkel_ref=') && !str_contains($live_preview['payload']['html'], 'utm_campaign='), 'recipient token and UTMs are not exposed in the email URL');
+$token = $live_preview['token']; $result = WKEL_Outreach::send($token);
 check(is_string($result) && message($l)['status'] === 'sent' && count($GLOBALS['wkel_http_calls']) === 1, 'mocked Resend acceptance and sent status');
 $row = message($l); $resend = $row['resend_id'];
+preg_match('#outreach-click/([a-f0-9]{64})#', $live_preview['payload']['html'], $click_match);
+$click_token = $click_match[1] ?? '';
+$click_request = new WP_REST_Request('GET'); $click_request['token'] = $click_token;
+$click_response = WKEL_Outreach::handle_tracked_click($click_request);
+$click_row = WKEL_Outreach_Store::click_link(hash('sha256', $click_token));
+check($click_response->get_status() === 302 && str_contains($click_response->get_headers()['Location'], 'utm_campaign=enp-cold-outreach') && !str_contains($click_response->get_headers()['Location'], 'example.invalid'), 'tracked link redirects only to the configured ENP site with campaign UTMs');
+check((int) $click_row['click_count'] === 1 && (int) $click_row['lead_id'] === $l && (int) $click_row['message_id'] === (int) $row['id'], 'link request joins back to the exact lead and message');
+$activity_request = new WP_REST_Request('POST'); $activity_request->set_param('wkel_ref', $click_token); $activity_request->set_param('event', 'page_view'); $activity_request->set_param('path', '/services/?email=private@example.invalid');
+$activity_request->set_header('Origin', 'https://elitenursepartners.com.au');
+check(WKEL_Outreach::handle_site_activity($activity_request)->get_status() === 202, 'public site activity accepts only the configured ENP origin and known token');
+$activity_request->set_header('Origin', 'https://attacker.example');
+check(WKEL_Outreach::handle_site_activity($activity_request)->get_status() === 403, 'site activity rejects foreign origins');
 check($resend !== '' && (int) $row['sent_at'] > 0, 'message ID and sent timestamp persisted');
 $stored = $wpdb->get_var($wpdb->prepare('SELECT payload FROM ' . WKEL_Outreach_Store::table('messages') . ' WHERE id = %d', $row['id']));
 check(WKEL_Encryption::is_encrypted($stored) && !str_contains($stored, 'example.invalid'), 'rendered snapshot encrypted');
@@ -141,7 +161,7 @@ check(message($l)['status'] === 'bounced', 'late failure cannot downgrade bounce
 check(is_wp_error(WKEL_Outreach::send(preview($l, $t))), 'bounce blocks subsequent send');
 $bad = new WP_REST_Request('POST'); $bad->set_body('{}');
 check(WKEL_Email::handle_webhook($bad)->get_status() === 401, 'unsigned webhook rejected');
-// Test mode bypasses the production server lock only for exact allowlisted recipients.
+// Test mode permits only exact allowlisted recipients; the live-send dry-run gate remains separate.
 update_option('wkel_outreach_dry_run', '1');
 update_option('wkel_outreach_test_recipients', "dummy-test-allowed@example.invalid");
 update_option('wkel_outreach_test_mode', '1');
@@ -151,12 +171,18 @@ $identity = new ReflectionMethod(WKEL_Outreach::class, 'update_test_contact_iden
 $identity->invoke(null, $allowed_test, 'Nicola Reviewer', 'Reviewer Organisation');
 $identity_vars = WKEL_Email::build_template_vars($allowed_test);
 check($identity_vars['first_name'] === 'Nicola' && $identity_vars['organisation'] === 'Reviewer Organisation', 'existing test contact updates its reviewer identity');
-$test_preview = WKEL_Outreach::preview($allowed_test, $t, 'test');
+$test_preview = WKEL_Outreach::preview($allowed_test, $tracking_template, 'test');
 check(!is_wp_error($test_preview), 'test tab can preview an allowlisted recipient');
+check(preg_match('#/outreach-click/[a-f0-9]{64}#', $test_preview['payload']['html']) === 1, 'allowlisted test preview uses a tracked link when tracking is enabled');
 check(str_starts_with($test_preview['payload']['subject'], '[TEST] '), 'test subject is visibly labelled');
 check(!str_contains($test_preview['payload']['html'], 'data-wkel-test-copy') && !str_contains($test_preview['payload']['html'], 'TEST EMAIL'), 'test body contains only approved template copy');
 $result = WKEL_Outreach::send($test_preview['token']);
-check(is_string($result) && message($allowed_test)['mode'] === 'test' && count($GLOBALS['wkel_http_calls']) === $before_test_send + 1, 'allowlisted test mode sends one real-provider request even while dry-run is on');
+$test_row = message($allowed_test);
+preg_match('#outreach-click/([a-f0-9]{64})#', $test_preview['payload']['html'], $test_click_match);
+$test_click_token = $test_click_match[1] ?? '';
+$test_click_row = $test_click_token ? WKEL_Outreach_Store::click_link(hash('sha256', $test_click_token)) : null;
+check(is_string($result) && $test_row['mode'] === 'test' && count($GLOBALS['wkel_http_calls']) === $before_test_send + 1, 'allowlisted test mode sends one mocked provider request even while live dry-run is on');
+check(is_array($test_click_row) && (int) $test_click_row['lead_id'] === $allowed_test && (int) $test_click_row['message_id'] === (int) $test_row['id'], 'tracked test URL maps only to its test contact and message');
 $blocked_test = lead('test-blocked');
 check(is_wp_error(WKEL_Outreach::preview($blocked_test, $t, 'test')), 'test tab refuses to preview a recipient outside the allowlist');
 $result = WKEL_Outreach::send(preview($blocked_test, $t));
