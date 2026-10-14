@@ -184,7 +184,7 @@ class WKEL_Outreach {
         if (!hash_equals($preview['fingerprint'], self::fingerprint($lead, $template, $payload))) return self::reject($lead, 'preview_changed');
         if (get_option('wkel_outreach_test_mode', '0') === '1' && ($mode !== 'test' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
         if ($mode === 'test' && (get_option('wkel_outreach_test_mode', '0') !== '1' || !self::is_test_recipient($payload['to'][0]))) return self::reject($lead, 'test_recipient_not_allowed');
-        if ($mode === 'live' && (get_option('wkel_outreach_test_mode', '0') === '1' || !defined('WKEL_OUTREACH_ALLOW_LIVE') || WKEL_OUTREACH_ALLOW_LIVE !== true || get_option('wkel_outreach_dry_run', '1') !== '0')) return self::reject($lead, 'live_send_locked');
+        if ($mode === 'live' && (get_option('wkel_outreach_test_mode', '0') === '1' || get_option('wkel_outreach_dry_run', '1') !== '0')) return self::reject($lead, 'live_send_locked');
         if ($mode === 'live' && self::is_test_recipient($payload['to'][0])) return self::reject($lead, 'test_contact_wrong_tab');
         $blocked = WKEL_Outreach_Store::blocked($lead, $payload['to'][0]);
         if ($blocked) return self::reject($lead, $blocked);
@@ -206,9 +206,9 @@ class WKEL_Outreach {
     private static function dispatch(int $lead, int $template, string $token, array $payload, string $mode): string|WP_Error {
         global $wpdb;
         $test_send = ($mode === 'test' || $mode === 'legacy') && get_option('wkel_outreach_test_mode', '0') === '1' && self::is_test_recipient($payload['to'][0]);
-        $server_live = defined('WKEL_OUTREACH_ALLOW_LIVE') && WKEL_OUTREACH_ALLOW_LIVE === true && get_option('wkel_outreach_dry_run', '1') === '0';
-        // The explicit test mode bypasses the server lock and dry-run only for exact allowlisted recipients.
-        $dry = !$test_send && !$server_live;
+        $live_delivery = get_option('wkel_outreach_dry_run', '1') === '0';
+        // The explicit test mode bypasses dry-run only for exact allowlisted recipients.
+        $dry = !$test_send && !$live_delivery;
         $delivery_mode = $test_send ? 'test' : ($dry ? 'dry_run' : 'live');
         $key = WKEL_Encryption::decrypt((string) get_option('wkel_resend_key', ''));
         if (!$dry && (!$key || WKEL_Encryption::is_encrypted($key))) return self::reject($lead, 'resend_not_configured');
@@ -356,7 +356,7 @@ class WKEL_Outreach {
             && get_option('wkel_outreach_migrated') === '1'
             && get_option('wkel_outreach_test_mode', '0') !== '1'
             && get_option('wkel_outreach_dry_run', '1') === '0'
-            && defined('WKEL_OUTREACH_ALLOW_LIVE') && WKEL_OUTREACH_ALLOW_LIVE === true;
+
         $test_leads = array_values(array_filter($leads, fn($item) => in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
         $live_leads = array_values(array_filter($leads, fn($item) => get_post_meta($item->ID, '_wkel_campaign', true) !== '' && !in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
         $eligible_leads = $tab === 'test' ? $test_leads : ($tab === 'live' ? $live_leads : []);
@@ -370,14 +370,14 @@ class WKEL_Outreach {
         echo '</nav>';
         if ($result !== null) echo '<div class="notice ' . (is_wp_error($result) ? 'notice-error' : 'notice-success') . '"><p>' . esc_html(is_wp_error($result) ? $result->get_error_message() : (string) $result) . '</p></div>';
         if ($tab === 'test') {
-            echo '<section class="wkel-outreach-card"><h2>1. Allow test recipients</h2><p>These settings control separate things. Only exact addresses on the saved allowlist can receive test emails. Live campaign delivery also has a separate server-side safety lock; these checkboxes do not open it.</p>';
+            echo '<section class="wkel-outreach-card"><h2>1. Allow test recipients</h2><p>Only exact addresses on the saved allowlist can receive test emails. Dry run blocks live campaign delivery; test sending is separate.</p>';
             echo '<form method="post">'; wp_nonce_field('wkel_outreach'); echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="settings">';
             echo '<p><label><input type="checkbox" name="enabled" value="1" ' . checked(get_option('wkel_outreach_enabled'), '1', false) . '> Enable Outreach</label><br><span class="description">Master switch: off blocks every send; on alone does not unlock live sending.</span></p>';
-            echo '<p><label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal campaign sends</label><br><span class="description">On: live campaign sends are simulated and not delivered. Off removes this one barrier only; the server lock and other checks still apply. Test emails are not blocked by this setting.</span></p>';
+            echo '<p><label><input type="checkbox" name="dry_run" value="1" ' . checked(get_option('wkel_outreach_dry_run', '1'), '1', false) . '> Dry run for normal campaign sends</label><br><span class="description">On: live campaign sends are simulated and not delivered. Off allows live delivery only when Outreach is enabled, test mode is off, and all other safeguards pass. Test emails are not blocked by this setting.</span></p>';
             echo '<p><label><input type="checkbox" name="test_mode" value="1" ' . checked(get_option('wkel_outreach_test_mode', '0'), '1', false) . '> Enable allowlisted test sending</label><br><span class="description">On: real test sends are allowed only to the saved addresses below, and live campaign sends are blocked. Off: no test sends.</span></p>';
             echo '<label for="wkel-test-recipients"><strong>Test recipient email addresses (one per line)</strong></label><textarea id="wkel-test-recipients" name="test_recipients" rows="4" class="large-text" placeholder="reviewer@example.com">' . esc_textarea((string) get_option('wkel_outreach_test_recipients', '')) . '</textarea>';
             submit_button('Save test settings', 'secondary', 'submit', false); echo '</form>';
-            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked by test mode and the separate server lock.</p></div>';
+            if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked while test mode or dry run is on.</p></div>';
             echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This stages a contact only. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
             echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
             foreach (self::test_recipients() as $address) echo '<option value="' . esc_attr($address) . '">' . esc_html($address) . '</option>';
@@ -391,7 +391,7 @@ class WKEL_Outreach {
             echo '</section>';
         } elseif ($tab === 'live') {
             echo '<section class="wkel-outreach-card"><h2>Campaign readiness</h2>';
-            if (!$live_send_ready) echo '<div class="notice notice-warning inline"><p><strong>Live sending is not ready.</strong> You can import contacts and preview emails here, but delivery stays blocked until Outreach is enabled, migration is complete, test mode and dry run are off, and the server-side live-send lock is open.</p></div>';
+            if (!$live_send_ready) echo '<div class="notice notice-warning inline"><p><strong>Live sending is not ready.</strong> You can import contacts and preview emails here, but delivery stays blocked until Outreach is enabled, migration is complete, test mode and dry run are off.</p></div>';
             else echo '<p>Live sending is enabled. Each email is still sent individually, only after preview and confirmation.</p>';
             echo '</section><section class="wkel-outreach-card"><h2>1. Import campaign contacts</h2><p>Upload the approved campaign CSV. Importing does not send email.</p>';
             WKEL_Campaign::render_admin_page(); echo '</section>';
@@ -431,7 +431,7 @@ class WKEL_Outreach {
                 && get_option('wkel_outreach_migrated') === '1'
                 && get_option('wkel_outreach_test_mode', '0') !== '1'
                 && get_option('wkel_outreach_dry_run', '1') === '0'
-                && defined('WKEL_OUTREACH_ALLOW_LIVE') && WKEL_OUTREACH_ALLOW_LIVE === true;
+    
             echo '<div class="wkel-send-confirm"><h3>Review before sending</h3><p><strong>To:</strong> ' . esc_html($recipient) . '<br><strong>From:</strong> ' . esc_html($preview['payload']['from']) . '<br><strong>Subject:</strong> ' . esc_html($preview['payload']['subject']) . '</p>';
             echo '<iframe title="Formatted email preview" sandbox="" referrerpolicy="no-referrer" style="width:100%;height:420px;background:white;border:1px solid #ccc" srcdoc="' . esc_attr('<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><meta charset="utf-8">' . $preview['payload']['html']) . '"></iframe>';
             echo '<form method="post" onsubmit="return confirm(' . esc_attr(wp_json_encode($test_preview ? 'Send this test email to ' . $recipient . '?' : 'Send this email to ' . $recipient . '?') . ';') . '">'; wp_nonce_field('wkel_outreach');
