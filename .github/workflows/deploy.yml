@@ -97,7 +97,7 @@ jobs:
           key: ${{ env.DEPLOY_KEY }}
           source: wkel-release.tar.gz,wkel-release.tar.gz.sha256
           target: ${{ env.DEPLOY_PATH }}/.wkel-release
-      - name: Install verified package and keep delivery locked
+      - name: Install verified package with dry-run and test mode enabled
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ env.DEPLOY_HOST }}
@@ -129,4 +129,4 @@ jobs:
               echo "Loaded outreach code: test-only controls present" . PHP_EOL;
               echo "Installed WK Event Leads " . WKEL_VERSION . PHP_EOL;
             ' --path="$WP_ROOT" --allow-root
-            echo "Installed shared release; site QA and separate sending approval remain required."
+            echo "Installed shared release; dry-run and allowlisted test mode remain enabled."

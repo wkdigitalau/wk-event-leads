@@ -10,7 +10,7 @@ define('LOGGED_IN_KEY', 'isolated-qa-login'); define('NONCE_KEY', 'isolated-qa-n
 define('AUTH_SALT', 'isolated-qa-auth-salt'); define('SECURE_AUTH_SALT', 'isolated-qa-secure-salt');
 define('LOGGED_IN_SALT', 'isolated-qa-login-salt'); define('NONCE_SALT', 'isolated-qa-nonce-salt');
 define('WKEL_ENCRYPTION_KEY', str_repeat('ab', 32)); define('WKEL_ENCRYPTION_IV', str_repeat('cd', 16));
-define('WKEL_OUTREACH_ALLOW_LIVE', true); // QA transport is always intercepted by the MU guard.
+define('WKEL_OUTREACH_ALLOW_LIVE', false); // QA proves delivery uses dry-run/test mode, not a server-side unlock.
 define('DISABLE_WP_CRON', true); define('WP_DEBUG', true); define('WP_DEBUG_LOG', true); define('WP_DEBUG_DISPLAY', false);
 if (getenv('WKEL_QA_UI')) { define('WP_HOME', 'http://127.0.0.1:18741'); define('WP_SITEURL', 'http://127.0.0.1:18741'); }
 if (!defined('ABSPATH')) define('ABSPATH', __DIR__ . '/');
