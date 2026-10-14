@@ -9,13 +9,14 @@ class WKEL_Outreach_Store {
     }
 
     public static function upgrade(): void {
-        if (get_option('wkel_outreach_schema') === '1') return;
+        if (get_option('wkel_outreach_schema') === '2') return;
         global $wpdb;
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         $charset = $wpdb->get_charset_collate();
         $messages = self::table('messages');
         $audit = self::table('send_audit');
         $suppression = self::table('suppression');
+        $clicks = self::table('clicks');
         dbDelta("CREATE TABLE $messages (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             lead_id bigint(20) unsigned NOT NULL,
@@ -57,12 +58,27 @@ class WKEL_Outreach_Store {
             created_at bigint(20) unsigned NOT NULL,
             PRIMARY KEY  (email_hash)
         ) $charset;");
-        foreach ([$messages, $audit, $suppression] as $table) {
+        dbDelta("CREATE TABLE $clicks (
+            token_hash char(64) NOT NULL,
+            lead_id bigint(20) unsigned NOT NULL,
+            message_id bigint(20) unsigned NOT NULL,
+            target_url text NOT NULL,
+            campaign varchar(100) NOT NULL DEFAULT '',
+            link_index int(10) unsigned NOT NULL DEFAULT 0,
+            click_count bigint(20) unsigned NOT NULL DEFAULT 0,
+            first_click_at bigint(20) unsigned NOT NULL DEFAULT 0,
+            last_click_at bigint(20) unsigned NOT NULL DEFAULT 0,
+            PRIMARY KEY  (token_hash),
+            KEY lead_id (lead_id),
+            KEY message_id (message_id)
+        ) $charset;");
+        foreach ([$messages, $audit, $suppression, $clicks] as $table) {
             if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table))) !== $table) return;
         }
         add_option('wkel_outreach_enabled', '0', '', false);
         add_option('wkel_outreach_dry_run', '1', '', false);
-        update_option('wkel_outreach_schema', '1', false);
+        add_option('wkel_campaign_link_tracking', '0', '', false);
+        update_option('wkel_outreach_schema', '2', false);
     }
 
     public static function audit(int $lead_id, int $message_id, string $event, string $code = '', ?string $event_id = null, ?int $at = null): bool {
@@ -111,8 +127,31 @@ class WKEL_Outreach_Store {
         return '';
     }
 
+    public static function add_click_link(string $token_hash, int $lead_id, int $message_id, string $target_url, string $campaign, int $link_index): bool {
+        global $wpdb;
+        return false !== $wpdb->insert(self::table('clicks'), [
+            'token_hash' => $token_hash, 'lead_id' => $lead_id, 'message_id' => $message_id,
+            'target_url' => $target_url, 'campaign' => sanitize_key($campaign),
+            'link_index' => $link_index,
+        ]);
+    }
+
+    public static function click_link(string $token_hash): array|null {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare('SELECT * FROM ' . self::table('clicks') . ' WHERE token_hash = %s', $token_hash), ARRAY_A);
+        return is_array($row) ? $row : null;
+    }
+
+    public static function record_click(string $token_hash, int $at): bool {
+        global $wpdb;
+        return false !== $wpdb->query($wpdb->prepare(
+            'UPDATE ' . self::table('clicks') . ' SET first_click_at = IF(click_count = 0, %d, first_click_at), click_count = click_count + 1, last_click_at = %d WHERE token_hash = %s',
+            $at, $at, $token_hash
+        ));
+    }
+
     public static function messages(int $lead_id): array {
         global $wpdb;
-        return $wpdb->get_results($wpdb->prepare('SELECT id,mode,status,delivery,resend_id,created_at,sent_at,outcome_at FROM ' . self::table('messages') . ' WHERE lead_id = %d ORDER BY id DESC LIMIT 50', $lead_id), ARRAY_A) ?: [];
+        return $wpdb->get_results($wpdb->prepare('SELECT id,mode,status,delivery,resend_id,created_at,sent_at,outcome_at, (SELECT COALESCE(SUM(c.click_count),0) FROM ' . self::table('clicks') . ' c WHERE c.message_id = ' . self::table('messages') . '.id) AS link_requests FROM ' . self::table('messages') . ' WHERE lead_id = %d ORDER BY id DESC LIMIT 50', $lead_id), ARRAY_A) ?: [];
     }
 }
