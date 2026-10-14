@@ -15,7 +15,8 @@ The feature is opt-in and defaults off. Do not enable it until ENP has approved 
 
 1. Confirm the plugin's ENP URL setting is `https://elitenursepartners.com.au` (or the exact canonical HTTPS host).
 2. In Outreach → Test emails, leave **Enable first-party campaign link tracking** off until the public-site helper and privacy notice are live.
-3. After those gates are met, enable the checkbox and save. It changes only future **live campaign** previews/sends. Test emails and dry runs are not tracked.
+3. For a controlled internal end-to-end test after the helper and privacy notice are approved, enable the checkbox and preview/send only to the exact allowlisted internal test addresses. Those test messages are visibly labelled `[TEST]` in the subject; their body stays as approved, and their unique links map only to the test contact/message.
+4. Live campaign previews/sends use unique links only when the checkbox is enabled. The checkbox does not bypass the separate live-send controls: test mode blocks campaign sends, and dry run blocks actual live delivery.
 
 No Cloudflare DNS change is required for this arrangement; the redirects use the existing Connect host. DNS is only relevant if a separate branded tracking hostname is chosen later.
 
@@ -44,9 +45,9 @@ Use short, non-personal categories such as `callback`, `book-a-meeting`, or `con
 ## Verification before live outreach
 
 1. Keep the tracking switch off while deploying the helper and privacy notice.
-2. Turn it on, create a live preview for a controlled internal QA lead, and confirm the email link points to the Connect redirect (not directly to ENP).
-3. Send only to an internal test address using the test tab first; note that test mode deliberately does not produce tracked links.
-4. For end-to-end validation, use a controlled live campaign lead only after the campaign is approved and live sending is unlocked. Confirm the lead's activity timeline shows a link request, then a page view and any tagged CTA; confirm the destination has campaign UTMs but the browser URL and GA4 page_location do not contain `wkel_ref`.
-5. Check GA4 Realtime/DebugView for the page/session campaign and confirm no personal identifiers or `wkel_ref` are present.
+2. Turn on the tracking checkbox only after the public helper and approved privacy wording are live.
+3. Keep test mode enabled and dry run on. Preview and send only to an exact allowlisted internal test address. Confirm the subject has `[TEST]`, the body is the approved content, and the link points to Connect's unique redirect.
+4. Open the test link and confirm the test contact's activity history shows a link request and then the expected page/CTA events. These are test-contact records, not campaign outcomes.
+5. Check GA4 Realtime/DebugView for campaign-level UTMs and confirm no names, email addresses, or `wkel_ref` appear in GA4.
 
-Because the test tab is deliberately untracked and live-send restrictions remain, there is no safe way to prove the live redirect-to-lead join with a test message alone. Do not use a real prospect as a test recipient.
+Only after internal validation and launch approval should the first small live cohort be released. Test mode and dry run are independent controls: test mode restricts messages to the exact allowlist; dry run prevents provider delivery for non-test campaign sends.
