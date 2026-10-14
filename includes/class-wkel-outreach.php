@@ -355,7 +355,7 @@ class WKEL_Outreach {
         $live_send_ready = get_option('wkel_outreach_enabled', '0') === '1'
             && get_option('wkel_outreach_migrated') === '1'
             && get_option('wkel_outreach_test_mode', '0') !== '1'
-            && get_option('wkel_outreach_dry_run', '1') === '0'
+            && get_option('wkel_outreach_dry_run', '1') === '0';
 
         $test_leads = array_values(array_filter($leads, fn($item) => in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
         $live_leads = array_values(array_filter($leads, fn($item) => get_post_meta($item->ID, '_wkel_campaign', true) !== '' && !in_array(strtolower(WKEL_Email::get_lead_email($item->ID)), $allowed, true)));
@@ -430,8 +430,8 @@ class WKEL_Outreach {
             $live_ready = get_option('wkel_outreach_enabled', '0') === '1'
                 && get_option('wkel_outreach_migrated') === '1'
                 && get_option('wkel_outreach_test_mode', '0') !== '1'
-                && get_option('wkel_outreach_dry_run', '1') === '0'
-    
+                && get_option('wkel_outreach_dry_run', '1') === '0';
+
             echo '<div class="wkel-send-confirm"><h3>Review before sending</h3><p><strong>To:</strong> ' . esc_html($recipient) . '<br><strong>From:</strong> ' . esc_html($preview['payload']['from']) . '<br><strong>Subject:</strong> ' . esc_html($preview['payload']['subject']) . '</p>';
             echo '<iframe title="Formatted email preview" sandbox="" referrerpolicy="no-referrer" style="width:100%;height:420px;background:white;border:1px solid #ccc" srcdoc="' . esc_attr('<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:"><meta charset="utf-8">' . $preview['payload']['html']) . '"></iframe>';
             echo '<form method="post" onsubmit="return confirm(' . esc_attr(wp_json_encode($test_preview ? 'Send this test email to ' . $recipient . '?' : 'Send this email to ' . $recipient . '?') . ';') . '">'; wp_nonce_field('wkel_outreach');
@@ -441,7 +441,7 @@ class WKEL_Outreach {
                 submit_button('Confirm and send test email', 'primary', 'submit', false);
             } else {
                 echo '<p><strong>CAMPAIGN EMAIL — check the recipient and content carefully.</strong></p>';
-                if (!$live_ready) echo '<p class="notice notice-warning inline"><strong>Not sent:</strong> live delivery is locked or test mode/dry run is active. The live-send safeguard remains in force.</p>';
+                if (!$live_ready) echo '<p class="notice notice-warning inline"><strong>Not sent:</strong> live delivery is blocked while test mode or dry run is active.</p>';
                 if ($live_ready) submit_button('Confirm and send this email', 'primary', 'submit', false);
                 else echo '<button type="button" class="button button-primary" disabled aria-disabled="true">Live sending is locked</button>';
             }
