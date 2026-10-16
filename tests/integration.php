@@ -109,12 +109,13 @@ check(WKEL_Outreach_Store::blocked(0, $email) === 'unsubscribed', 'suppression s
 $l = lead('duplicate'); $dup = lead('duplicate'); update_post_meta($dup, '_wkel_email_status', 'bounced'); wp_trash_post($dup);
 check(is_wp_error(WKEL_Outreach::send(preview($l, $t))), 'bounced duplicate in trash blocks send');
 $import = new ReflectionMethod(WKEL_Campaign::class, 'upsert_campaign_contact'); $import->setAccessible(true);
-$l = $import->invoke(null, ['email' => 'csv@example.invalid', 'name' => 'CSV Dummy', 'organisation' => 'Dummy', 'campaign' => 'qa', 'list_type' => 'mixed', 'segment' => 'qa', 'role' => 'Dummy', 'personalisation_note' => 'Local RN recruitment activity was recently advertised.']);
+$l = $import->invoke(null, ['email' => 'csv@example.invalid', 'name' => 'CSV Dummy', 'organisation' => 'Dummy', 'campaign' => 'qa', 'list_type' => 'mixed', 'segment' => 'qa', 'role' => 'Dummy', 'location' => 'Tamworth', 'personalisation_note' => 'Local RN recruitment activity was recently advertised.']);
 check(get_post_meta($l, '_wkel_outreach_status', true) === 'draft' && get_post_meta($l, '_wkel_stage', true) !== 'contacted', 'campaign import stages unsent lead');
-$note_template = WKEL_Outreach::save_template(0, 'Personalisation QA', 'Hello {{first_name}}', '<p>{{personalisation_note}}</p><a href="{{unsubscribe_url}}">Unsubscribe</a>');
+check(get_post_meta($l, '_wkel_location', true) === 'Tamworth', 'campaign import stores location');
+$note_template = WKEL_Outreach::save_template(0, 'Personalisation QA', 'Hello {{first_name}}', '<p>{{personalisation_note}} — {{location}}</p><a href="{{unsubscribe_url}}">Unsubscribe</a>');
 check(is_int($note_template) && WKEL_Outreach::approve($note_template) === true, 'personalisation merge field can be approved');
 $note_payload = WKEL_Outreach::payload($l, $note_template);
-check(!is_wp_error($note_payload) && str_contains($note_payload['html'], 'Local RN recruitment activity was recently advertised.'), 'imported personalisation note renders in the email');
+check(!is_wp_error($note_payload) && str_contains($note_payload['html'], 'Local RN recruitment activity was recently advertised.') && str_contains($note_payload['html'], 'Tamworth'), 'imported personalisation note and location render in the email');
 WKEL_Campaign::suppress_email('csv@example.invalid', 'qa');
 $import->invoke(null, ['email' => 'csv@example.invalid', 'name' => 'Changed', 'organisation' => 'Dummy', 'campaign' => 'qa', 'list_type' => 'mixed']);
 check(WKEL_Outreach_Store::blocked($l, 'csv@example.invalid') === 'unsubscribed', 'reimport cannot clear suppression');

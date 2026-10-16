@@ -97,7 +97,7 @@ class WKEL_Outreach {
     }
 
     private static function validate_fields(string $text): bool|WP_Error {
-        $allowed = ['first_name', 'full_name', 'organisation', 'personalisation_note', 'event_name', 'sender_name', 'sender_phone', 'sender_email', 'atncs_url', 'enp_url', 'unsubscribe_url'];
+        $allowed = ['first_name', 'full_name', 'organisation', 'location', 'personalisation_note', 'event_name', 'sender_name', 'sender_phone', 'sender_email', 'atncs_url', 'enp_url', 'unsubscribe_url'];
         preg_match_all('/\{\{([^{}]+)\}\}/', $text, $matches);
         foreach ($matches[1] as $field) if (!in_array($field, $allowed, true)) return new WP_Error('merge_fields', 'Unknown merge field: ' . sanitize_text_field($field));
         return true;
@@ -462,6 +462,7 @@ class WKEL_Outreach {
                         'wkel_organisation' => $organisation], 'outreach', '', 'outreach', 'other');
                     if (is_wp_error($lead)) { $result = $lead; $lead = 0; break; }
                     self::update_test_contact_identity($lead, $name, $organisation);
+                    update_post_meta($lead, '_wkel_location', sanitize_text_field(wp_unslash($_POST['location'] ?? '')));
                     update_post_meta($lead, '_wkel_outreach_enrolled', '1');
                     update_post_meta($lead, '_wkel_personalisation_note', sanitize_textarea_field(wp_unslash($_POST['personalisation_note'] ?? '')));
                     $result = 'Lead staged. No email sent.';
@@ -512,7 +513,7 @@ class WKEL_Outreach {
             submit_button('Save test settings', 'secondary', 'submit', false); echo '</form>';
             if (get_option('wkel_outreach_test_mode', '0') === '1') echo '<div class="notice notice-info inline"><p><strong>Test mode is on.</strong> Test emails are marked <strong>[TEST]</strong> in the subject only; the message body is the approved template copy. Live campaign sends remain blocked by test mode and dry run.</p></div>';
             echo '</section><section class="wkel-outreach-card"><h2>2. Add a test contact</h2><p>This stages a contact only. It will not send until you preview and confirm below.</p><form method="post">'; wp_nonce_field('wkel_outreach');
-            echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
+            echo '<input type="hidden" name="tab" value="test"><input type="hidden" name="wkel_outreach_action" value="add"><p><label>Name <input name="name" placeholder="Reviewer name" required></label> <label>Organisation <input name="organisation" value="Internal email review"></label> <label>Location <input name="location" placeholder="e.g. Tamworth"></label> <label>Email <select name="email" required><option value="">Choose an allowlisted address…</option>';
             foreach (self::test_recipients() as $address) echo '<option value="' . esc_attr($address) . '">' . esc_html($address) . '</option>';
             echo '</select></label></p><p><label for="wkel-test-personalisation">Optional personalisation note</label><textarea id="wkel-test-personalisation" name="personalisation_note" rows="3" class="large-text" placeholder="One short, contact-specific opening sentence"></textarea></p>';
             submit_button('Add test contact', 'secondary', 'submit', false); echo '</form></section>';
@@ -538,7 +539,7 @@ class WKEL_Outreach {
             echo '<section class="wkel-outreach-card"><h2>Email templates</h2><p>Draft, review and approve reusable email versions here. Only approved templates are available in the send tabs.</p><ul class="wkel-template-list">';
             foreach ($templates as $item) echo '<li><a href="' . esc_url(admin_url('admin.php?page=wkel_outreach&tab=templates&template_id=' . $item->ID)) . '">' . esc_html($item->post_title) . '</a> — <strong>' . (get_post_meta($item->ID, '_wkel_approved', true) === '1' ? 'Approved' : 'Draft — approval required') . '</strong></li>';
             echo '</ul><form method="post" class="wkel-template-editor">'; wp_nonce_field('wkel_outreach');
-            echo '<input type="hidden" name="tab" value="templates"><input type="hidden" name="template_id" value="' . esc_attr($template) . '"><input type="hidden" name="wkel_outreach_action" value="save_template"><p><label>Template name <input name="template_name" required value="' . esc_attr($template ? get_the_title($template) : '') . '"></label></p><p><label>Subject <input class="large-text" name="subject" required value="' . esc_attr(get_post_meta($template, '_wkel_subject', true)) . '"></label></p><p><label>Email body (HTML)<textarea class="large-text" rows="12" name="html" required>' . esc_textarea(get_post_meta($template, '_wkel_html', true)) . '</textarea></label></p><p>Available merge fields: first_name, full_name, organisation, personalisation_note, event_name, sender_name, sender_phone, sender_email, atncs_url, enp_url, unsubscribe_url. To insert a contact-specific opening note, use <code>{{personalisation_note}}</code>. A required field with no imported note will block preview. Unsubscribe is required.</p>';
+            echo '<input type="hidden" name="tab" value="templates"><input type="hidden" name="template_id" value="' . esc_attr($template) . '"><input type="hidden" name="wkel_outreach_action" value="save_template"><p><label>Template name <input name="template_name" required value="' . esc_attr($template ? get_the_title($template) : '') . '"></label></p><p><label>Subject <input class="large-text" name="subject" required value="' . esc_attr(get_post_meta($template, '_wkel_subject', true)) . '"></label></p><p><label>Email body (HTML)<textarea class="large-text" rows="12" name="html" required>' . esc_textarea(get_post_meta($template, '_wkel_html', true)) . '</textarea></label></p><p>Available merge fields: first_name, full_name, organisation, location, personalisation_note, event_name, sender_name, sender_phone, sender_email, atncs_url, enp_url, unsubscribe_url. To insert a contact-specific opening note, use <code>{{personalisation_note}}</code>. A required field with no imported note will block preview. Unsubscribe is required.</p>';
             submit_button($template ? 'Save changes as draft' : 'Save new template as draft'); echo '</form>';
             if ($template) { echo '<form method="post">'; wp_nonce_field('wkel_outreach'); echo '<input type="hidden" name="tab" value="templates"><input type="hidden" name="template_id" value="' . esc_attr($template) . '"><input type="hidden" name="wkel_outreach_action" value="approve">'; submit_button('Approve this template revision', 'secondary'); echo '</form>'; }
         }
