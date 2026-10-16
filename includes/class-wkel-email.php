@@ -42,6 +42,7 @@ class WKEL_Email {
 
         $org = $vars['wkel_wkel_organisation'] ?? $vars['wkel_organisation'] ?? '';
         $vars['organisation'] = $org;
+        $vars['location'] = sanitize_text_field((string) get_post_meta($lead_id, '_wkel_location', true));
 
         // Event display name
         $event_slug  = get_post_meta($lead_id, '_wkel_event', true);
